@@ -1,0 +1,13 @@
+/build/
+/build-*/
+/dist/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.bmp
+*.log
+imgui.ini
+__pycache__/
+*.pyc
