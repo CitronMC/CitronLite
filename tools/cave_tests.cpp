@@ -1,6 +1,6 @@
-// The guard on selectSlot, as machine code: the real cave goes into a stand-in function in another
-// process, with selectSlot's own first instructions, and the stand-in is called with every step.
-//   slot_guard_tests        starts itself as the stand-in, then tests it
+// The caves that decide things, as machine code: each real cave goes into a stand-in function in another
+// process, with the game function's own first instructions, and the stand-in is called every way.
+//   cave_tests        starts itself as the stand-in, then tests it
 #include "citron/engine.h"
 
 #include <windows.h>
@@ -13,8 +13,10 @@ namespace {
 // What the two processes share, in a named mapping.
 struct Shared {
     uint64_t entry;          // the stand-in's address in its process
+    uint64_t grab, release;  // the cursor's stand-ins
+    int grabs, releases;     // how many times each has run
     volatile LONG ready;
-    volatile LONG ask;       // 1: run `slot`, 0 when answered
+    volatile LONG ask;       // 1: run `slot`, 2: grab the cursor, 0 when answered
     int from;                // the slot held before the call
     int slot;
     int result;              // what the stand-in returned
@@ -22,7 +24,7 @@ struct Shared {
     volatile LONG stop;
 };
 
-constexpr wchar_t kMapName[] = L"Local\\CitronLiteSlotGuardTest";
+constexpr wchar_t kMapName[] = L"Local\\CitronLiteCaveTest";
 
 // push rbp; push r15; push r14; push r13; then the slot taken: mov [rcx+0x10], edx; mov eax, 1;
 // and back through the same pops. The first seven bytes are what the guard takes the place of.
@@ -34,7 +36,13 @@ const uint8_t kStandIn[] = {
     0xC3,                                       // ret
 };
 
+// push rsi; sub rsp, 0x20 as grabCursor opens, then a count at [rcx+0x14] and back
+const uint8_t kGrab[] = {0x56, 0x48, 0x83, 0xEC, 0x20, 0xFF, 0x41, 0x14, 0x48, 0x83, 0xC4, 0x20, 0x5E, 0xC3};
+// a count at [rcx+0x18]
+const uint8_t kRelease[] = {0xFF, 0x41, 0x18, 0xC3};
+
 using SelectSlot = int (*)(void* inventory, int slot, int flag);
+using Grab = void (*)(void* self);
 
 int Child() {
     HANDLE map = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, kMapName);
@@ -48,12 +56,23 @@ int Child() {
         code = static_cast<uint8_t*>(VirtualAlloc((void*)at, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
     if (!code) return 3;
     std::memcpy(code, kStandIn, sizeof kStandIn);
-    FlushInstructionCache(GetCurrentProcess(), code, sizeof kStandIn);
+    std::memcpy(code + 0x40, kGrab, sizeof kGrab);
+    std::memcpy(code + 0x80, kRelease, sizeof kRelease);
+    FlushInstructionCache(GetCurrentProcess(), code, 0x100);
     s->entry = (uint64_t)code;
+    s->grab = (uint64_t)code + 0x40;
+    s->release = (uint64_t)code + 0x80;
     uint8_t inventory[0x20] = {};
     int* held = reinterpret_cast<int*>(inventory + 0x10);
     InterlockedExchange(&s->ready, 1);
     while (!s->stop) {
+        if (s->ask == 2) {
+            reinterpret_cast<Grab>(code + 0x40)(inventory);
+            s->grabs = *reinterpret_cast<int*>(inventory + 0x14);
+            s->releases = *reinterpret_cast<int*>(inventory + 0x18);
+            InterlockedExchange(&s->ask, 0);
+            continue;
+        }
         if (s->ask != 1) {
             Sleep(0);
             continue;
@@ -116,7 +135,7 @@ int main(int argc, char** argv) {
     Call c = Ask(s, 5);
     Check(c.result == 1 && c.held == 5, "before the guard a step goes through");
 
-    CaveHook hook;
+    CaveHook hook, cursor;
     const bool in = InstallSlotGuardHook(proc, hook, s->entry, 7);
     Check(in, "the guard goes in");
     c = Ask(s, 5);
@@ -149,6 +168,36 @@ int main(int argc, char** argv) {
     c = Ask(s, 3);
     Check(c.result == 1 && c.held == 3, "after it a step goes through");
 
+    // the cursor: what each state makes of a grab
+    auto tick = [&] {
+        InterlockedExchange(&s->ask, 2);
+        while (s->ask == 2) Sleep(0);
+    };
+    auto state = [&] {
+        uint8_t now = 0xFF;
+        Read(proc, cursor.slot, now);
+        return now;
+    };
+    Check(InstallCursorGuardHook(proc, cursor, s->grab, 5, s->release), "the cursor's guard goes in");
+    tick();
+    Check(s->grabs == 1 && s->releases == 0, "plain, the game grabs");
+    Write(proc, cursor.slot, kCursorRelease);
+    tick();
+    Check(s->grabs == 1 && s->releases == 1, "asked to, the grab lets go instead");
+    Check(state() == kCursorFree, "and the state moves on to free");
+    tick();
+    tick();
+    Check(s->grabs == 1 && s->releases == 1, "free, the pointer is left alone, and it lets go only once");
+    Write(proc, cursor.slot, kCursorGrabAgain);
+    tick();
+    Check(s->grabs == 2 && s->releases == 1, "closing, the game grabs");
+    Check(state() == kCursorPlain, "and the state says it has");
+    tick();
+    Check(s->grabs == 3 && s->releases == 1, "plain again, the game grabs");
+    RemoveHook(proc, cursor);
+    uint8_t grabBack[sizeof kGrab] = {};
+    Check(Read(proc, s->grab, grabBack, sizeof grabBack) && std::memcmp(grabBack, kGrab, sizeof grabBack) == 0, "its code is as it was");
+
     InterlockedExchange(&s->stop, 1);
     WaitForSingleObject(pi.hProcess, 3000);
     TerminateProcess(pi.hProcess, 0);
@@ -158,6 +207,6 @@ int main(int argc, char** argv) {
         std::printf("%d checks failed\n", g_failed);
         return 1;
     }
-    std::printf("slot guard tests passed\n");
+    std::printf("cave tests passed\n");
     return 0;
 }

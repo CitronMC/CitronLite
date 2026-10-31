@@ -125,6 +125,7 @@ void Backend::Impl::FovBoundsTick(const Modules& m) {
 // alike. The game turns the hotbar from raw input, by more than one way, so the guard stands where they
 // all end, selectSlot, and refuses a step of one slot while the byte is set.
 void Backend::Impl::SetWheelSuppressed(bool on) {
+    on = on || guiHeld;
     if (on == slotsHeld || !slotHook.installed) return;
     const uint8_t flag = on ? 1 : 0;
     if (engine::Write(proc, slotHook.slot, flag)) slotsHeld = on;
@@ -141,7 +142,7 @@ void Backend::Impl::RestoreZoom() {
 void Backend::Impl::ZoomTick(const Modules& m) {
     const ModuleSnapshot* s = Mod(m, "zoom");
     const auto now = clock_t_::now();
-    const bool guard = s && s->on && Check(*s, "scroll", true);
+    const bool guard = (s && s->on && Check(*s, "scroll", true)) || guiHeld;
     if (guard && !slotHook.installed && now >= nextSlotTry) {
         const uintptr_t at = SiteAt(game::Site::SelectSlot);
         if (!at || !engine::InstallSlotGuardHook(proc, slotHook, at, kSelectSlotStolen)) nextSlotTry = now + std::chrono::seconds(5);
@@ -152,7 +153,7 @@ void Backend::Impl::ZoomTick(const Modules& m) {
         slotsHeld = false;
     }
     if (!s || !s->on || !fovAddr || !InGame()) {
-        if (zoomActive || slotsHeld) RestoreZoom();
+        if (zoomActive || slotsHeld != guiHeld) RestoreZoom();
         return;
     }
     const bool held = s->bind > 0 && PhysKeyDown(s->bind);

@@ -37,6 +37,13 @@ constexpr SiteTable k52{{
      "48 83 EC 38 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? "
      "41 B8 03 00 00 00"},
     {"FovLimit", false, 0x46BD4A9, "F3 0F 5F 05 ?? ?? ?? ?? F3 0F 10 0D ?? ?? ?? ?? 0F 28 F1 F3 0F C2 F7 01"},
+    {"TurnCall", false, 0x4761834, "F3 45 0F 59 C1 F3 44 0F 11 44 24 24 48 8D 54 24 20 48 89 F1 E8 ?? ?? ?? ?? 48 8B 4C 24 28 48 31 E1"},
+    {"MouseInput", false, 0x8A880,
+     "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 44 0F 29 BD ?? ?? ?? ?? 44 0F 29 B5 ?? ?? ?? ?? 44 0F 29 AD ?? ?? ?? ?? 44 0F 29 A5 ?? ?? ?? ?? 44 0F 29 9D ?? ?? ?? ?? 44 0F 29 95 ?? ?? ?? ?? 44 0F 29 8D ?? ?? ?? ?? 44 0F 29 85 ?? ?? ?? ?? 0F 29 BD ?? ?? ?? ?? 0F 29 B5 ?? ?? ?? ?? 48 C7 85 ?? ?? ?? ?? ?? ?? ?? ?? 48 89 CE 8B 05"},
+    {"GrabCursor", false, 0x5DCE3C0,
+     "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 83 C4 ?? 5E 48 FF E2 90 48 83 C4 ?? 5E C3 CC CC CC CC CC CC CC CC CC CC CC CC CC 56 48 83 EC"},
+    {"ReleaseCursor", false, 0x5DCE410,
+     "56 48 83 EC ?? 48 89 CE 48 8B 01 48 8B 80 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 8E ?? ?? ?? ?? 48 8B 01 48 8B 80 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 48 83 C4 ?? 5E 48 FF E2 90 48 83 C4 ?? 5E C3 CC CC CC CC CC CC CC CC CC CC CC CC CC 56 53"},
 }};
 
 constexpr SiteTable k60{{
@@ -65,6 +72,13 @@ constexpr SiteTable k60{{
      "48 83 EC 38 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? "
      "41 B8 03 00 00 00"},
     {"FovLimit", false, 0x5309D99, "F3 0F 5F 05 ?? ?? ?? ?? F3 0F 10 0D ?? ?? ?? ?? 0F 28 F1 F3 0F C2 F7 01"},
+    {"TurnCall", false, 0x6DA4B72, "45 0F 14 C0 44 0F 59 C7 44 0F 13 44 24 20 48 8D 54 24 20 48 89 F1 E8 ?? ?? ?? ?? 48 8B 44 24 28"},
+    {"MouseInput", false, 0x8A450,
+     "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC E8 02 00 00 48 8D AC 24 80 00 00 00 44 0F 29 AD 50 02 00 00 44 0F 29 A5 40 02 00 00 44 0F 29 9D 30 02 00 00 44 0F 29 95 20 02 00 00 44 0F 29 8D 10 02 00 00 44 0F 29 85 00 02 00 00 0F 29 BD F0 01 00 00 0F 29 B5 E0 01 00 00 48 C7 85 D8 01 00 00 FE FF FF FF 48 89 CE"},
+    {"GrabCursor", false, 0x65BB0A0,
+     "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 20 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 38 04 00 00"},
+    {"ReleaseCursor", false, 0x65BB0F0,
+     "56 48 83 EC 20 48 89 CE 48 8B 01 48 8B 80 00 05 00 00 FF 15 ?? ?? ?? ?? 84 C0 74 20 48 8B 8E C8 01 00 00 48 8B 01 48 8B 80 40 04 00 00"},
 }};
 
 constexpr SiteTable kNone{};
@@ -74,6 +88,7 @@ constexpr Layout kLayout52{
     0x48, 0x970, 0x1A8, 0x1B0, 0xE0, 0x248,
     0x10, 0x18, 0x1E8, 0x218, 0x220, 0x228, 0xBC0,
     0x5B8,
+    20, 0x4761890,
 };
 
 constexpr Layout kLayout60{
@@ -81,6 +96,7 @@ constexpr Layout kLayout60{
     0x48, 0x9D0, 0x1C8, 0x1D0, 0xF0, 0x268,
     0x10, 0x18, 0x210, 0x240, 0x248, 0x250, 0xBE8,
     0x5E0,
+    22, 0x6DA4BD0,
 };
 
 constexpr Layout kNoLayout{};

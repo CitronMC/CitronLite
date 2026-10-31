@@ -38,7 +38,7 @@ if [ "$MODE" = "tests" ]; then
   run_test game tools/game_tests.cpp src/core/game.cpp -lversion
   run_test names tools/names_tests.cpp
   run_test fastfall tools/fastfall_tests.cpp
-  run_test slot_guard tools/slot_guard_tests.cpp src/core/engine.cpp
+  run_test caves tools/cave_tests.cpp src/core/engine.cpp
   echo "  TEST ui"
   CITRON_LTO=0 CITRON_OBJ=build/obj-test CITRON_OUT=build/test/CitronLite.exe "$0" > build/test_ui_build.log 2>&1 || { cat build/test_ui_build.log; exit 1; }
   "$CXX" $TESTFLAGS tools/ui_tests.cpp src/config_io.cpp src/model.cpp -lcomdlg32 -lshell32 -o build/test_ui.exe

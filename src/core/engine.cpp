@@ -280,7 +280,7 @@ void* AllocCaveNear(const Proc& p, uintptr_t nearAddr, size_t size) {
 
 namespace {
 
-constexpr size_t kCaveBytes = 0x108;
+constexpr size_t kCaveBytes = 0x110;
 constexpr int kSlotOffset = 0x100;
 
 // A cave: `head`, then the stolen instructions and the jump back. The slot is at a fixed distance from
@@ -373,6 +373,33 @@ bool InstallSlotGuardHook(const Proc& p, CaveHook& h, uintptr_t match, int stole
     std::memcpy(head + 2, &disp, 4);
     const uint8_t off = 0;
     return PlaceCave(p, h, match, stolenN, head, sizeof head, &off, sizeof off);
+}
+
+bool InstallCursorGuardHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, uintptr_t release) {
+    uint8_t head[48] = {
+        0x80, 0x3D, 0, 0, 0, 0, kCursorPlain,      // cmp byte ptr [slot], plain
+        0x74, 39,                                  // je run
+        0x80, 0x3D, 0, 0, 0, 0, kCursorGrabAgain,  // cmp byte ptr [slot], grab again
+        0x74, 23,                                  // je again
+        0x80, 0x3D, 0, 0, 0, 0, kCursorFree,       // cmp byte ptr [slot], free
+        0x74, 13,                                  // je out
+        0xC6, 0x05, 0, 0, 0, 0, kCursorFree,       // mov byte ptr [slot], free
+        0xFF, 0x25, 0, 0, 0, 0,                    // jmp [slot + 8]            this tick's grab lets go instead
+        0xC3,                                      // out: ret
+        0xC6, 0x05, 0, 0, 0, 0, kCursorPlain,      // again: mov byte ptr [slot], plain
+    };                                             // run: the game's own grab
+    const auto point = [&](int at, int end, int target) {
+        const int32_t disp = target - end;
+        std::memcpy(head + at, &disp, 4);
+    };
+    point(2, 7, kSlotOffset);
+    point(11, 16, kSlotOffset);
+    point(20, 25, kSlotOffset);
+    point(29, 34, kSlotOffset);
+    point(36, 40, kSlotOffset + 8);
+    point(43, 48, kSlotOffset);
+    struct { uint64_t state; uint64_t release; } slot{kCursorPlain, release};
+    return PlaceCave(p, h, match, stolenN, head, sizeof head, &slot, sizeof slot);
 }
 
 void RemoveHook(const Proc& p, CaveHook& h) {

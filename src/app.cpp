@@ -288,10 +288,10 @@ void App::PollHotkeys() {
     }
 }
 
-// The Click GUI. An outside program cannot stop the mouse reaching the game: the game reads it raw,
-// past anything a hook can hold back. So it asks the game itself: the chat screen opens behind the GUI,
-// which frees the pointer and stills the camera, and everything on it is out of the way of the clicks,
-// which land on the overlay. Should chat not come, the pause screen does the same.
+// The Click GUI. The game reads the mouse past anything a hook can hold back, so the backend has it skip
+// its own mouse steps and let the pointer go. Should that not come, on a build without those places or
+// through a stretch when the game stops asking for the cursor, its chat screen does the same job, and
+// after that its pause screen.
 void App::ClickGuiTick() {
     const ModuleState* key = s.St("clickgui");
     const uint32_t pressed = PressesOf("clickgui", key ? LabelToVK(key->key) : 0);
@@ -300,10 +300,10 @@ void App::ClickGuiTick() {
     justBound = false;
     const unsigned long long now = GetTickCount64();
     if (gui == Gui::Closed) {
-        if (pressed && !bound && s.listening.empty() && !ui::Editing() && InGame() && backend.PressChat()) {
+        if (pressed && !bound && s.listening.empty() && !ui::Editing() && InGame()) {
             gui = Gui::Opening;
             guiAt = now;
-            guiTriedPause = false;
+            guiScreen = 0;
             SetKeysTaken(true);
             backend.SetGuiOpen(true);
         }
@@ -315,15 +315,13 @@ void App::ClickGuiTick() {
     }
     if (gui == Gui::Opening) {
         if (CursorShowing()) {
+            ClipCursor(nullptr);
             gui = Gui::Open;
-        } else if (now - guiAt > 700) {
-            if (guiTriedPause) {
-                CloseGui(false);
-            } else {
-                guiTriedPause = true;
-                guiAt = now;
-                backend.PressKey(VK_ESCAPE);
-            }
+        } else if (now - guiAt > 400) {
+            guiAt = now;
+            if (++guiScreen == 1) backend.PressChat();
+            else if (guiScreen == 2) backend.PressKey(VK_ESCAPE);
+            else CloseGui(false);
         }
         return;
     }
@@ -354,7 +352,7 @@ void App::CloseGui(bool backToGame) {
     backend.SetGuiOpen(false);
     gui = Gui::Closed;
     s.listening.clear();
-    if (backToGame) backend.PressKey(VK_ESCAPE);
+    if (backToGame && guiScreen > 0) backend.PressKey(VK_ESCAPE);
 }
 
 // Notifications.

@@ -83,7 +83,7 @@ Citron Lite supports **Minecraft 1.26.52 and 1.26.60** from the Microsoft Store 
   <img alt="The Click GUI over the game" src="assets/screenshots/clickgui.png" width="760">
 </p>
 
-**Click GUI.** Press Right Shift in a game and every module is on one screen. A click switches a module. Its arrow, or a right click, opens its settings under it. Right Shift or Escape closes it. Citron Lite opens the game's chat behind the GUI: that is what frees your mouse and keeps your camera still, and it closes again with the GUI. Change the key under **In Game** in Settings.
+**Click GUI.** Press Right Shift in a game and every module is on one screen. A click switches a module. Its arrow, or a right click, opens its settings under it. Right Shift or Escape closes it. While it is open your mouse is yours and the game gets none of it: your camera stays still and clicks do not hit anything. You can keep walking if you were. Change the key under **In Game** in Settings.
 
 **Notifications** say what switched, and who you added to or took off your friends list, in the corner of the game. Switch them off under **In Game**.
 
@@ -166,6 +166,8 @@ The client never runs code inside the game. It opens Minecraft's process and wor
 Every patch is written with the game's threads paused, and all of them come back out when the client closes.
 
 The Click GUI and the notifications are a second window, not part of the game: transparent, always on top, composited by Windows. It never takes the focus, and it lets clicks through unless the GUI is open. It only exists on screen while it has something on it, since a window over the game stops the game flipping straight to the display.
+
+The game reads the mouse past anything another program can hold back, so while the GUI is open it skips its own steps: the call that turns the camera and the function that handles clicks, and its cursor grab lets the pointer go instead. They all come back as the GUI closes. On a build where those places cannot be found, the game's chat screen is opened behind the GUI to do the same job.
 
 ### Source layout
 

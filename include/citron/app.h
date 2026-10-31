@@ -82,12 +82,12 @@ private:
     void SelfDestruct();
     void ApplyFriendEdits();
 
-    // the Click GUI: the game's chat screen stands open behind it, which frees the pointer and stills
-    // the camera
+    // the Click GUI
     enum class Gui { Closed, Opening, Open };
     Gui gui = Gui::Closed;
     unsigned long long guiAt = 0;
-    bool guiTriedPause = false, previewGui = false;
+    int guiScreen = 0;      // what freed the pointer: 0 the game let go of it, 1 its chat, 2 its pause screen
+    bool previewGui = false;
     uint32_t guiPressSeen = 0;
     void ClickGuiTick();
     void CloseGui(bool backToGame);

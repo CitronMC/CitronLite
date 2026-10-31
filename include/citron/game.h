@@ -24,6 +24,10 @@ enum class Site : uint8_t {
     OwnNametag,   // je that skips your own nametag (its two bytes, per build below)
     Perspective,  // Options::getPerspective (the value read is at +0x43)
     FovLimit,     // getFov's last clamp: maxss by 5, then the load of 130 (its operand at +12)
+    TurnCall,     // the one call of applyTurnDelta, which turns the camera (at Layout::turnCallAt)
+    MouseInput,   // GameCore::handleMouseInput: clicks and attacks
+    GrabCursor,   // ClientInstance::grabCursor: asked for on every tick of play
+    ReleaseCursor,  // ClientInstance::releaseCursor
     Count
 };
 
@@ -55,6 +59,10 @@ struct Layout {
 
     // Player
     uintptr_t playerSupplies;       // -> PlayerInventory
+
+    // The call at Site::TurnCall: where in the site, and the function it goes to.
+    int turnCallAt;
+    uint32_t turnDelta;
 };
 
 // The Timer: ticks a second, ticks this frame, the fraction of a tick drawn this frame.
