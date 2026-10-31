@@ -1,8 +1,8 @@
 // Prints what Citron Lite reads from a running Minecraft without writing anything to it: the build,
 // every site, and the walk to your player. The first thing to run after a game update.
 //   ./build_mingw.sh probe
-//   ./build_mingw.sh probe --live    also puts the camera and actor captures in for two seconds and
-//                                    lists what they saw, then takes them out again
+//   ./build_mingw.sh probe --live    also puts the camera capture in for two seconds, then takes it
+//                                    out again
 #include "citron/bedrock.h"
 #include "citron/engine.h"
 #include "citron/game.h"
@@ -12,7 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <set>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -22,54 +22,55 @@ namespace {
 
 void Live(const engine::Proc& proc, game::Build build, bedrock::Reader& rd, uintptr_t me) {
     const uintptr_t base = (uintptr_t)proc.base;
-    engine::CaveHook cam, ring;
-    const bool camOk = engine::InstallCaptureR8Hook(proc, cam, base + game::SiteFor(build, game::Site::Camera).rva, 6);
-    const bool ringOk = engine::InstallRingHook(proc, ring, base + game::SiteFor(build, game::Site::ActorRender).rva + 0x2E,
-                                                6, 0x30, 1024);
-    std::printf("live: camera capture %s, actor ring %s\n", camOk ? "in" : "FAILED", ringOk ? "in" : "FAILED");
+    engine::CaveHook cam;
+    if (!engine::InstallCaptureR8Hook(proc, cam, base + game::SiteFor(build, game::Site::Camera).rva, 6)) {
+        std::printf("live: the camera capture would not go in\n");
+        return;
+    }
+    std::printf("live: camera capture in\n");
     Sleep(2000);
-    if (camOk) {
-        uintptr_t at = 0;
-        float yp[2] = {};
-        if (engine::Read(proc, cam.slot, at) && at && engine::Read(proc, at, yp, sizeof yp)) {
-            float pitch = 0, yaw = 0;
-            rd.ReadRotation(me, pitch, yaw);
-            std::printf("  camera 0x%llX: yaw %.4f, pitch %.4f rad (%.2f, %.2f degrees); the player turns %.2f, %.2f\n",
-                        (unsigned long long)at, yp[0], yp[1], yp[0] * 57.29578f, yp[1] * 57.29578f, yaw, pitch);
-        } else {
-            std::printf("  the camera was not captured (is the game in the foreground and drawing?)\n");
-        }
+    uintptr_t at = 0;
+    float yp[2] = {};
+    if (engine::Read(proc, cam.slot, at) && at && engine::Read(proc, at, yp, sizeof yp)) {
+        float pitch = 0, yaw = 0;
+        rd.ReadRotation(me, pitch, yaw);
+        std::printf("  camera 0x%llX: yaw %.4f, pitch %.4f rad (%.2f, %.2f degrees); the player turns %.2f, %.2f\n",
+                    (unsigned long long)at, yp[0], yp[1], yp[0] * 57.29578f, yp[1] * 57.29578f, yaw, pitch);
+    } else {
+        std::printf("  the camera was not captured (is the game drawing?)\n");
     }
-    if (ringOk) {
-        uint64_t writes = 0;
-        engine::Read(proc, ring.slot, writes);
-        std::vector<uintptr_t> slots(ring.ringN);
-        engine::Read(proc, ring.slot + 8, slots.data(), slots.size() * sizeof(uintptr_t));
-        std::set<uintptr_t> actors(slots.begin(), slots.end());
-        actors.erase(0);
-        std::printf("  %llu actors drawn, %zu different ones in the ring\n", (unsigned long long)writes, actors.size());
-        int shown = 0;
-        for (uintptr_t a : actors) {
-            if (shown++ >= 24) break;
-            uintptr_t vt = 0;
-            engine::Read(proc, a, vt);
-            std::string type, tag;
-            rd.TypeId(a, type);
-            rd.NameTag(a, tag);
-            float mn[3] = {}, mx[3] = {};
-            const bool box = rd.ReadBox(a, mn, mx);
-            bedrock::Motion mo;
-            const bool moved = rd.ReadMotion(a, mo);
-            std::printf("    %s vt +0x%llX %-28.28s %-18.18s", a == me ? "me " : "   ",
-                        (unsigned long long)(vt - base), type.c_str(), tag.c_str());
-            if (box) std::printf(" box %.2f x %.2f at %.1f %.1f %.1f", mx[0] - mn[0], mx[1] - mn[1], mn[0], mn[1], mn[2]);
-            if (moved && box) std::printf(" eye %.2f above", mo.pos[1] - mn[1]);
-            std::printf("\n");
-        }
+    engine::RemoveHook(proc, cam);
+    std::printf("live: capture out\n");
+}
+
+void ListActors(const engine::Proc& proc, bedrock::Reader& rd, const bedrock::Actor& me, const float (&eye)[3]) {
+    std::vector<bedrock::ActorRef> list;
+    if (!rd.Actors(me, list)) {
+        std::printf("no actors\n");
+        return;
     }
-    if (camOk) engine::RemoveHook(proc, cam);
-    if (ringOk) engine::RemoveHook(proc, ring);
-    std::printf("live: captures out\n");
+    const uintptr_t base = (uintptr_t)proc.base;
+    std::map<std::string, int> kinds;
+    int shown = 0;
+    for (const bedrock::ActorRef& a : list) {
+        std::string type;
+        rd.TypeId(a.ptr, type);
+        const std::string kind = type.substr(0, type.find('.'));
+        ++kinds[kind];
+        if (kind != "minecraft:player" || a.ptr == me.ptr || shown >= 16) continue;
+        ++shown;
+        std::string tag;
+        rd.NameTag(a.ptr, tag);
+        float mn[3] = {}, mx[3] = {};
+        rd.ReadBox(a.ptr, mn, mx);
+        const float dx = (mn[0] + mx[0]) * 0.5f - eye[0], dz = (mn[2] + mx[2]) * 0.5f - eye[2];
+        uintptr_t vt = 0;
+        engine::Read(proc, a.ptr, vt);
+        std::printf("    vt +0x%llX %-20.20s box %.2f x %.2f, %.1f blocks away\n", (unsigned long long)(vt - base), tag.c_str(),
+                    mx[0] - mn[0], mx[1] - mn[1], std::sqrt(dx * dx + dz * dz));
+    }
+    std::printf("  %zu actors:\n", list.size());
+    for (const auto& kv : kinds) std::printf("    %4d %s\n", kv.second, kv.first.c_str());
 }
 
 }  // namespace
@@ -163,6 +164,7 @@ int main(int argc, char** argv) {
             if (!it.name.empty()) std::printf("    %d: %s x%d (aux %d)\n", i + 1, it.name.c_str(), it.count, it.aux);
         }
     }
+    ListActors(proc, rd, me, mo.pos);
     if (live && !bad) Live(proc, build, rd, me.ptr);
     return bad ? 1 : 0;
 }

@@ -57,7 +57,6 @@ struct CaveHook {
     uintptr_t match = 0;     // the site
     uintptr_t cave  = 0;
     uintptr_t slot  = 0;
-    int       ringN = 0;     // 0 for one value, else a ring of N pointers at slot + 8
     int       stolen = 0;    // whole instructions at the site, at least 5 bytes
     uint8_t   orig[16] = {};
     bool      installed = false;
@@ -81,10 +80,6 @@ inline bool InstallCaptureR8Hook(const Proc& p, CaveHook& h, uintptr_t match, in
 // At a store of xmm0: multiplies xmm0 by the float at the slot first, so the game stores the
 // scaled value itself. 1.0 changes nothing.
 bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, float initial);
-
-// Stores a register into a ring of `ringN` pointers (a power of two), for a site that runs for
-// many objects a frame. The write count is at the slot, the ring at slot + 8.
-bool InstallRingHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, uint8_t modrm, int ringN);
 
 // Puts the site back and frees the cave once no thread is inside it.
 void RemoveHook(const Proc& p, CaveHook& h);

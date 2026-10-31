@@ -11,7 +11,9 @@ namespace {
 // The entt registry, as the game's inlined try_get walks it.
 constexpr uintptr_t kSparseBegin = 0x48, kSparseEnd = 0x50, kNodes = 0x68, kNodesEnd = 0x70;
 constexpr uintptr_t kNodeStride = 0x20;
-constexpr uintptr_t kStorageSparse = 0x08, kStorageSparseEnd = 0x10, kStorageComponents = 0x50;
+constexpr uintptr_t kStorageSparse = 0x08, kStorageSparseEnd = 0x10, kStoragePacked = 0x20, kStorageComponents = 0x50;
+constexpr uint32_t kEntityIndex = 0x3FFFFu;   // the low bits of an id; all set is a removed entry
+constexpr size_t kComponentPage = 128;        // components to a page of the storage
 // WeakEntityRef { EntityRegistry*, control block, entity id }; entt lives at EntityRegistry + 0x30.
 constexpr uintptr_t kEnttInRegistry = 0x30;
 
@@ -199,6 +201,32 @@ bool Reader::LocalPlayer(Actor& out) {
     out.registry = registry;
     out.entity = ref.entity;
     return true;
+}
+
+// The owner components lie in pages in the same order as the entity ids in `packed`.
+bool Reader::Actors(const Actor& me, std::vector<ActorRef>& out) {
+    out.clear();
+    const uintptr_t storage = ResolveStorage(me.registry, game::kActorOwnerComponent);
+    uintptr_t packed[2] = {}, pages = 0;
+    if (!storage || !Rd(storage + kStoragePacked, packed) || !Rd(storage + kStorageComponents, pages) ||
+        !Plausible(packed[0]) || !Plausible(pages) || packed[1] <= packed[0])
+        return false;
+    const size_t count = (size_t)(packed[1] - packed[0]) / sizeof(uint32_t);
+    if (count > 1u << 16) return false;
+    entities_.resize(count);
+    if (!Bytes(packed[0], entities_.data(), count * sizeof(uint32_t))) return false;
+    const size_t pageCount = (count - 1) / kComponentPage + 1;
+    std::vector<uintptr_t> pageList(pageCount);
+    if (!Bytes(pages, pageList.data(), pageCount * sizeof(uintptr_t))) return false;
+    uintptr_t page[kComponentPage];
+    for (size_t p = 0; p < pageCount; ++p) {
+        const size_t first = p * kComponentPage, n = std::min(count - first, kComponentPage);
+        if (!Plausible(pageList[p]) || !Bytes(pageList[p], page, n * sizeof(uintptr_t))) continue;
+        for (size_t i = 0; i < n; ++i)
+            if ((entities_[first + i] & kEntityIndex) != kEntityIndex && Plausible(page[i]))
+                out.push_back({page[i], entities_[first + i]});
+    }
+    return !out.empty();
 }
 
 bool Reader::ReadMotion(uintptr_t actor, Motion& out) {

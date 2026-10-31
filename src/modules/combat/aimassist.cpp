@@ -50,8 +50,9 @@ void Backend::Impl::AimAssistTick(const Modules& m) {
     }
 
     // Your own turning: whatever moved the camera since it was last seen, that was not this module.
+    // The step's time is capped at a frame or so, so a stall of this thread never comes out as a flick.
     const float dt = aimLastStep == clock_t_::time_point{} ? 1.f / 240.f
-                   : std::clamp(std::chrono::duration<float>(now - aimLastStep).count(), 0.f, 0.05f);
+                   : std::clamp(std::chrono::duration<float>(now - aimLastStep).count(), 0.f, 0.016f);
     const float turn = aimHaveYaw ? WrapPi(look.yaw - aimLastYaw) : 0.f;
     aimHaveYaw = true;
     aimLastYaw = look.yaw;

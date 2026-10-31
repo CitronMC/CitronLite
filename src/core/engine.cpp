@@ -80,7 +80,7 @@ namespace {
 // WriteProcessMemory is not atomic. A thread whose instruction pointer is inside the bytes being
 // replaced runs half the old instruction and half the new one and faults, always at the same place.
 // Code is only ever written with every game thread stopped and none of them inside the range.
-constexpr size_t kCaveSpan = 0x2108 + 1024 * 8;   // the largest cave allocated here
+constexpr size_t kCaveSpan = 0x1000;   // the largest cave allocated here
 
 class FrozenThreads {
 public:
@@ -380,69 +380,6 @@ bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stole
     Log("[cave] xmm0-scale installed @ 0x%llX -> cave 0x%llX slot 0x%llX (stole %d, factor %.3f)",
         (unsigned long long)match, (unsigned long long)caveA,
         (unsigned long long)slot, stolenN, initial);
-    return true;
-}
-
-bool InstallRingHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, uint8_t modrm, int ringN) {
-    if (!p.h || stolenN < 5 || stolenN > 16) return false;
-    if (ringN <= 0 || (ringN & (ringN - 1)) != 0 || ringN > 1024) return false;  // power of two
-
-    uint8_t orig[16] = {};
-    if (!Read(p, match, orig, stolenN)) return false;
-
-    const size_t CAVE = 0x108 + (size_t)ringN * 8;
-    void* cave = AllocCaveNear(p, match, CAVE);
-    if (!cave) { Log("[cave] ring AllocCaveNear failed near 0x%llX", (unsigned long long)match); return false; }
-    uintptr_t caveA = (uintptr_t)cave;
-    uintptr_t idxSlot = caveA + 0x100;     // writes so far
-    uintptr_t ring    = caveA + 0x108;     // ringN pointers
-
-    // Two scratch registers, never the captured one, so any low register can be captured.
-    uint8_t reg = (modrm >> 3) & 7;                  // 0..7 (low regs; no REX.R here)
-    uint8_t sA, sB;                                  // scratch: index, ring base
-    if      (reg == 0) { sA = 1; sB = 2; }           // cap rax -> scratch rcx,rdx
-    else if (reg == 1) { sA = 0; sB = 2; }           // cap rcx -> scratch rax,rdx
-    else               { sA = 0; sB = 1; }           // else    -> scratch rax,rcx
-    uint8_t sib = (uint8_t)(0xC0 | (sA << 3) | sB);  // SIB for [sB + sA*8]
-
-    uint8_t buf[0x108 + 1024 * 8] = {};
-    int n = 0;
-    buf[n++] = 0x9C;                                                           // pushfq
-    buf[n++] = (uint8_t)(0x50 | sA);                                          // push sA
-    buf[n++] = (uint8_t)(0x50 | sB);                                          // push sB
-    buf[n++] = 0x48; buf[n++] = 0x8B; buf[n++] = (uint8_t)((sA << 3) | 0x05); // mov sA,[rip+d1] (sequence)
-    int32_t d1 = (int32_t)(idxSlot - (caveA + n + 4)); std::memcpy(buf + n, &d1, 4); n += 4;
-    buf[n++] = (uint8_t)(0x50 | sA);                                          // preserve full sequence
-    buf[n++] = 0x48; buf[n++] = 0x81; buf[n++] = (uint8_t)(0xE0 | sA);        // and sA, imm32 (N-1)
-    int32_t mask = ringN - 1; std::memcpy(buf + n, &mask, 4); n += 4;
-    buf[n++] = 0x48; buf[n++] = 0x8D; buf[n++] = (uint8_t)((sB << 3) | 0x05); // lea sB,[rip+d2] (ring)
-    int32_t d2 = (int32_t)(ring - (caveA + n + 4));    std::memcpy(buf + n, &d2, 4); n += 4;
-    buf[n++] = 0x48; buf[n++] = 0x89; buf[n++] = (uint8_t)((reg << 3) | 0x04); buf[n++] = sib; // mov [sB+sA*8],reg
-    buf[n++] = (uint8_t)(0x58 | sA);                                          // restore full sequence
-    buf[n++] = 0x48; buf[n++] = 0xFF; buf[n++] = (uint8_t)(0xC0 | sA);        // inc sA
-    buf[n++] = 0x48; buf[n++] = 0x89; buf[n++] = (uint8_t)((sA << 3) | 0x05); // mov [rip+d3],sA (publish sequence)
-    int32_t d3 = (int32_t)(idxSlot - (caveA + n + 4)); std::memcpy(buf + n, &d3, 4); n += 4;
-    buf[n++] = (uint8_t)(0x58 | sB);                                          // pop sB
-    buf[n++] = (uint8_t)(0x58 | sA);                                          // pop sA
-    buf[n++] = 0x9D;                                                           // popfq
-    std::memcpy(buf + n, orig, stolenN); n += stolenN; // stolen original
-    buf[n++] = 0xE9;                                   // jmp back
-    int32_t relBack = (int32_t)((match + stolenN) - (caveA + n + 4)); std::memcpy(buf + n, &relBack, 4); n += 4;
-
-    SIZE_T put = 0;
-    if (!WriteProcessMemory(p.h, cave, buf, CAVE, &put) || put != CAVE) {
-        VirtualFreeEx(p.h, cave, 0, MEM_RELEASE); Log("[cave] ring write failed"); return false;
-    }
-    uint8_t tramp[16]; std::memset(tramp, 0x90, sizeof(tramp));
-    tramp[0] = 0xE9;
-    int32_t relFwd = (int32_t)(caveA - (match + 5)); std::memcpy(tramp + 1, &relFwd, 4);
-    if (!WriteProtected(p, match, tramp, stolenN)) {
-        VirtualFreeEx(p.h, cave, 0, MEM_RELEASE); Log("[cave] ring tramp failed"); return false;
-    }
-    h.match = match; h.cave = caveA; h.slot = idxSlot; h.stolen = stolenN; h.ringN = ringN;
-    std::memcpy(h.orig, orig, stolenN); h.installed = true;
-    Log("[cave] ring installed @ 0x%llX -> cave 0x%llX (N=%d, stole %d)",
-        (unsigned long long)match, (unsigned long long)caveA, ringN, stolenN);
     return true;
 }
 

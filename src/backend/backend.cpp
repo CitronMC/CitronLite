@@ -22,7 +22,6 @@ int HookOffset(Site s) {
     case Site::HurtTime:
     case Site::Looking:
     case Site::HitboxWidth: return 0;
-    case Site::ActorRender: return 0x2E;
     case Site::Perspective: return 0x43;
     case Site::AirAccel: return 1;
     default: return -1;
@@ -270,7 +269,7 @@ void Backend::Impl::ForgetGame() {
     SetSnapTap(0);
     SetWheelOwned(false, 0);
     rd.Detach();
-    camHook = renderHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = engine::CaveHook{};
+    camHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = engine::CaveHook{};
     jumpDelay = useDelay = ownNametag = hotbarWheel = CodePatch{};
     reachInstalled = reachKeep = false;
     reachFloats = 0;
@@ -319,7 +318,7 @@ void Backend::Impl::RestoreAll() {
     RestoreGamma();
     ReachRestore();
     for (CodePatch* p : {&jumpDelay, &useDelay, &ownNametag, &hotbarWheel}) ClearPatch(*p);
-    for (engine::CaveHook* h : {&camHook, &renderHook, &hurtHook, &lookHook, &perspHook, &airHook}) {
+    for (engine::CaveHook* h : {&camHook, &hurtHook, &lookHook, &perspHook, &airHook}) {
         if (h->installed) engine::RemoveHook(proc, *h);
         *h = engine::CaveHook{};
     }
@@ -409,7 +408,7 @@ void Backend::Impl::Worker() {
         RefreshLocal();
         CoreHooksTick(m);
         RefreshLook();
-        RefreshEntities(m);
+        RefreshEntities();
         RefreshCrosshair(m);
         LandedHitTick(m);
         FriendClickTick(m);

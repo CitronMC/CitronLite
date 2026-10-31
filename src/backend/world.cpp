@@ -87,25 +87,17 @@ void Backend::Impl::RefreshLocal() {
     }
 }
 
-// The camera and the ring of drawn actors go in the first time a module needs them and stay until the
-// game is let go: pulling the ring while Hitbox still has boxes to put back would leave them wide.
+// What the modules that are on need from the world. The camera capture goes in the first time one
+// wants it and stays until the game is let go.
 void Backend::Impl::CoreHooksTick(const Modules& m) {
     const bool view = On(m, "aimassist") || On(m, "triggerbot") || On(m, "jumpreset") || On(m, "stap") ||
                       On(m, "autosprint") || On(m, "friends");
-    const bool actors = view || On(m, "hitbox");
-    if ((!view || camHook.installed) && (!actors || renderHook.installed)) return;
+    wantActors = view || On(m, "hitbox");
+    if (!view || camHook.installed) return;
     const auto now = clock_t_::now();
     if (now < nextCoreTry) return;
-    bool failed = false;
-    if (view && !camHook.installed) {
-        const uintptr_t at = SiteAt(game::Site::Camera);
-        failed |= !at || !engine::InstallCaptureR8Hook(proc, camHook, at, 6);
-    }
-    if (actors && !renderHook.installed) {
-        const uintptr_t at = SiteAt(game::Site::ActorRender);
-        failed |= !at || !engine::InstallRingHook(proc, renderHook, at + 0x2E, 6, 0x30, 1024);
-    }
-    if (failed) nextCoreTry = now + std::chrono::seconds(2);
+    const uintptr_t at = SiteAt(game::Site::Camera);
+    if (!at || !engine::InstallCaptureR8Hook(proc, camHook, at, 6)) nextCoreTry = now + std::chrono::seconds(2);
 }
 
 void Backend::Impl::RefreshLook() {
@@ -121,37 +113,35 @@ void Backend::Impl::RefreshLook() {
     look.pitch = yp[1];
 }
 
-void Backend::Impl::RefreshEntities(const Modules& m) {
+// The list of actors comes from the game's registry five times a second. Boxes near you are read every
+// 8 ms, for aim and the crosshair; the rest with the list, which is plenty for what is far away.
+void Backend::Impl::RefreshEntities() {
+    if (!wantActors || !local.valid) return;
     const auto now = clock_t_::now();
-    if (!renderHook.installed) {
-        ents.clear();
-        return;
-    }
-    if (now >= nextEntityPass) {
-        nextEntityPass = now + std::chrono::milliseconds(33);
-        const int n = renderHook.ringN;
-        static uintptr_t ring[1024];
-        if (n > 0 && n <= 1024 && engine::Read(proc, renderHook.slot + 8, ring, sizeof(uintptr_t) * n)) {
+    const bool listPass = now >= nextEntityPass;
+    if (listPass) {
+        nextEntityPass = now + std::chrono::milliseconds(200);
+        if (rd.Actors(local.actor, actorList)) {
+            ++entityPass;
             const uintptr_t base = (uintptr_t)proc.base, top = base + proc.size;
-            for (int i = 0; i < n; ++i) {
-                const uintptr_t actor = ring[i];
-                if (!rd.Plausible(actor)) continue;
-                auto it = ents.find(actor);
-                if (it != ents.end()) {
-                    it->second.seen = now;
+            for (const bedrock::ActorRef& a : actorList) {
+                auto it = ents.find(a.ptr);
+                if (it != ents.end() && it->second.entity == a.entity) {
+                    it->second.pass = entityPass;
                     continue;
                 }
                 uintptr_t vt = 0;
-                if (!engine::Read(proc, actor, vt) || vt < base || vt >= top) continue;
+                if (!engine::Read(proc, a.ptr, vt) || vt < base || vt >= top) continue;
                 Ent e;
-                e.actor = actor;
+                e.actor = a.ptr;
+                e.entity = a.entity;
                 e.vtable = vt;
-                e.seen = now;
-                ents.emplace(actor, e);
+                e.pass = entityPass;
+                ents[a.ptr] = std::move(e);
             }
+            for (auto it = ents.begin(); it != ents.end();)
+                it = it->second.pass != entityPass ? ents.erase(it) : std::next(it);
         }
-        for (auto it = ents.begin(); it != ents.end();)
-            it = now - it->second.seen > std::chrono::milliseconds(400) ? ents.erase(it) : std::next(it);
 
         // The class other players are built from: the vtable most of them carry.
         std::map<uintptr_t, int> votes;
@@ -166,7 +156,7 @@ void Backend::Impl::RefreshEntities(const Modules& m) {
                     e.typed = true;
                 }
             }
-            e.self = local.valid && e.actor == local.actor.ptr;
+            e.self = e.actor == local.actor.ptr;
             if (e.player && !e.self) ++votes[e.vtable];
             if (e.player && (e.named == clock_t_::time_point{} || now - e.named > std::chrono::seconds(1))) {
                 std::string tag;
@@ -186,10 +176,19 @@ void Backend::Impl::RefreshEntities(const Modules& m) {
             Log("[world] other players are built from vtable +0x%llX", (unsigned long long)(best - (uintptr_t)proc.base));
         }
     }
-    (void)m;
-    if (now < nextBoxPass) return;
+    if (!listPass && now < nextBoxPass) return;
     nextBoxPass = now + std::chrono::milliseconds(8);
-    for (auto it = ents.begin(); it != ents.end();) it = RefreshEnt(it->second) ? std::next(it) : ents.erase(it);
+    // A read that fails between lists keeps the last box: the list decides who is gone, so a target
+    // does not drop out for one bad read.
+    for (auto it = ents.begin(); it != ents.end();) {
+        Ent& e = it->second;
+        const float dx = e.mn[0] - local.eye[0], dz = e.mn[2] - local.eye[2];
+        if (!listPass && dx * dx + dz * dz > 16.f * 16.f) {
+            ++it;
+            continue;
+        }
+        it = RefreshEnt(e) || !listPass ? std::next(it) : ents.erase(it);
+    }
 }
 
 // The box as it is drawn this frame: the last tick's box moved back by however far the frame trails it.

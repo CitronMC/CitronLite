@@ -3,6 +3,7 @@
 //
 //   game core global --> ClientInstance --> Minecraft --> Timer (ticks a second, alpha)
 //   ClientInstance --> WeakEntityRef of your player --> entt --> ActorOwnerComponent --> Actor
+//   the same storage, walked end to end --> every actor the game holds
 //   Actor --> StateVectorComponent (position, last position, velocity), AABBShapeComponent,
 //             rotation, name tag, type id; Player --> PlayerInventory --> the 36 item stacks
 //
@@ -12,12 +13,18 @@
 #include "citron/game.h"
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace citron::bedrock {
 
 struct Actor {
     uintptr_t ptr = 0;
     uintptr_t registry = 0;
+    uint32_t entity = 0;
+};
+
+struct ActorRef {
+    uintptr_t ptr = 0;
     uint32_t entity = 0;
 };
 
@@ -43,6 +50,8 @@ public:
     bool ClientInstance(uintptr_t& ci);
     bool Timer(uintptr_t& at, float& ticksPerSecond, float& alpha);
     bool LocalPlayer(Actor& out);
+    // Every actor in your registry, drawn or not: players, mobs, items, whatever the server sent.
+    bool Actors(const Actor& me, std::vector<ActorRef>& out);
 
     bool ReadMotion(uintptr_t actor, Motion& out);
     bool ReadBox(uintptr_t actor, float (&mn)[3], float (&mx)[3], uintptr_t* component = nullptr);
@@ -74,6 +83,7 @@ private:
     bool StillClientInstance(uintptr_t ci);
     uintptr_t InventoryItems(uintptr_t player);
     bool InImage(uintptr_t p) const { return p >= base_ && p < end_; }
+    std::vector<uint32_t> entities_;
 
     const engine::Proc* proc_ = nullptr;
     game::Layout lay_{};

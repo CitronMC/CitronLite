@@ -12,7 +12,6 @@ enum class Build : uint8_t { Unknown, V1_26_52, V1_26_60 };
 enum class Site : uint8_t {
     GameCore,     // mov [rip+disp], r15: stores the game core global
     Camera,       // addss xmm0, [r8+4]: r8 is the render camera (yaw +0, pitch +4, radians)
-    ActorRender,  // the actor renderer: rsi is the actor being drawn at +0x2E
     HurtTime,     // mov ebp, [rax]: rax points at your hurt time
     Looking,      // mov eax, [rax+0x18]: rax is the HitResult under the crosshair
     Reach,        // the pick's reach clamp

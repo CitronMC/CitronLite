@@ -19,9 +19,6 @@ using SiteTable = std::array<SiteDef, kSites>;
 constexpr SiteTable k52{{
     {"GameCore", true, 0x7D8F2, "4C 89 3D ?? ?? ?? ?? 4D 85 FF"},
     {"Camera", true, 0x66EE404, "F3 41 0F 58 40 04 F3 0F"},
-    {"ActorRender", true, 0x1D51250,
-     "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 0F 29 7D ?? "
-     "0F 29 75 ?? 48 C7 45 ?? ?? ?? ?? ?? 4C 89 C6 ?? ?? ?? ?? ?? ?? 4C 89 C1"},
     {"HurtTime", false, 0x46BD5C7, "8B 28 48 89 ?? 48 83 C1"},
     {"Looking", false, 0x4BCBCA, "8B 40 ?? 83 C0 ?? 0F 28"},
     {"Reach", false, 0x4BCC4A,
@@ -44,9 +41,6 @@ constexpr SiteTable k52{{
 constexpr SiteTable k60{{
     {"GameCore", true, 0x7DBF2, "4C 89 3D ?? ?? ?? ?? 4D 85 FF"},
     {"Camera", true, 0x6EEBA64, "F3 41 0F 58 40 04 F3 0F"},
-    {"ActorRender", true, 0x594BE00,
-     "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ?? ?? ?? ?? 48 8D AC 24 ?? ?? ?? ?? 0F 29 7D ?? "
-     "0F 29 75 ?? 48 C7 45 ?? ?? ?? ?? ?? 4C 89 C6 ?? ?? ?? ?? ?? ?? 4C 89 C1"},
     {"HurtTime", false, 0x53A1030, "8B 28 48 89 ?? 48 83 C1"},
     {"Looking", false, 0x4E0A2EB, "8B 40 18 83 C0 FC 44 0F 28 C6 83 F8 FD"},
     {"Reach", false, 0x4E0A2C1,

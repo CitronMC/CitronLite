@@ -77,6 +77,7 @@ struct BtnClk {
 // The world.
 struct Ent {
     uintptr_t actor = 0;
+    uint32_t entity = 0;
     uintptr_t vtable = 0;
     uintptr_t box = 0;               // its AABBShapeComponent
     float mn[3] = {}, mx[3] = {};    // the box as it is drawn this frame
@@ -86,7 +87,8 @@ struct Ent {
     bool self = false;
     int team = 0;                    // colour family of the first colour code in its name tag
     std::string name;                // name tag without colour codes, first line
-    clock_t_::time_point seen{}, named{};
+    clock_t_::time_point named{};
+    uint32_t pass = 0;               // the last list it was on
     bool typed = false;
 };
 
@@ -147,6 +149,9 @@ struct Backend::Impl {
     float timerTps = 20.f;
     uintptr_t remotePlayerVtable = 0;
     clock_t_::time_point nextEntityPass{}, nextBoxPass{}, nextCoreTry{};
+    std::vector<bedrock::ActorRef> actorList;
+    uint32_t entityPass = 0;
+    bool wantActors = false;
 
     // focus
     HWND focusWindow = nullptr;
@@ -155,7 +160,7 @@ struct Backend::Impl {
     ULONGLONG focusAt = 0;
 
     // caves
-    engine::CaveHook camHook, renderHook, hurtHook, lookHook, perspHook, hitboxHook, airHook;
+    engine::CaveHook camHook, hurtHook, lookHook, perspHook, hitboxHook, airHook;
 
     // the crosshair
     bool lookBlock = false, lookEntity = false, lookKnown = false;
@@ -329,7 +334,7 @@ struct Backend::Impl {
     void RefreshLocal();
     void CoreHooksTick(const Modules& m);
     void RefreshLook();
-    void RefreshEntities(const Modules& m);
+    void RefreshEntities();
     bool RefreshEnt(Ent& e);
     void RefreshCrosshair(const Modules& m);
     void LandedHitTick(const Modules& m);

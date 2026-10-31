@@ -46,7 +46,7 @@ std::vector<int> Parse(const char* text) {
     return out;
 }
 
-const char* const kNames[] = {"GameCore", "Camera", "ActorRender", "HurtTime", "Looking", "Reach", "ReachWall",
+const char* const kNames[] = {"GameCore", "Camera", "HurtTime", "Looking", "Reach", "ReachWall",
                               "HotbarWheel", "AirAccel", "JumpDelay", "HitboxWidth", "UseDelay", "OwnNametag",
                               "Perspective"};
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == (size_t)Site::Count, "a site without a name here");
@@ -95,9 +95,8 @@ int main() {
             for (int v : p) fixed += v >= 0;
             Require(fixed >= 4, tag + " " + kNames[i] + ": too few fixed bytes to be unique");
         }
-        for (Site s : {Site::GameCore, Site::Camera, Site::ActorRender})
+        for (Site s : {Site::GameCore, Site::Camera})
             Require(SiteFor(b, s).required, tag + " " + kNames[(size_t)s] + " is required");
-        Wild(b, Site::ActorRender, {0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33});
         Wild(b, Site::JumpDelay, {5, 6});
         Wild(b, Site::UseDelay, {20, 21});
         Wild(b, Site::OwnNametag, {0, 1});
