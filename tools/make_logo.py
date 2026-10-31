@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Make everything that shows the Citron Lite mark from its master, assets/logo/mark.svg.
+"""Make everything that shows the Citron Lite brand from its two masters.
 
     python tools/make_logo.py
 
+Masters: assets/logo/mark.svg (the leaves) and assets/logo/wordmark.svg (the letters and the leaves).
+
 Writes:
     assets/logo/mark.png              the mark in lime, 512 px
-    assets/logo/wordmark-dark.png     mark and name for dark backgrounds
-    assets/logo/wordmark-light.png    mark and name for light backgrounds
+    assets/logo/wordmark-dark.png     the wordmark and Lite tag for dark backgrounds
+    assets/logo/wordmark-light.png    the same for light backgrounds
     assets/citron-lite.ico            the app icon, 16 to 256 px
-    include/citron/logo_data.h        the white mask the panel tints with the accent
+    include/citron/logo_data.h        the wordmark's two masks, tinted when the panel draws them
 
-All of it on transparency. Needs Pillow and numpy; the wordmarks use Albert Sans Bold from assets/fonts.
+All of it on transparency. Needs Pillow and numpy; the tag uses Schibsted Grotesk from assets/fonts.
 """
 import os
 import re
@@ -21,42 +23,53 @@ from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+LOGO = os.path.join(ROOT, "assets", "logo")
 LIME = (200, 241, 53)
-INK = (17, 19, 24)
-PAPER = (232, 234, 240)
+TEXT = (236, 238, 230)
+INK = (18, 20, 17)
+TAG_HEIGHT = 96          # px of the wordmark in the client
 
 
-def load_mark():
-    """Each path of the master as its outlines, in the 0 to 100 box. A path's later outlines are holes."""
-    with open(os.path.join(ROOT, "assets", "logo", "mark.svg"), encoding="utf-8") as f:
-        text = f.read()
-    parts = []
-    for d in re.findall(r'\bd="([^"]*)"', text):
-        outlines = []
-        for sub in re.findall(r"M[^MZ]*", d):
-            nums = [float(v) for v in re.findall(r"-?\d+\.?\d*", sub)]
-            outlines.append(list(zip(nums[0::2], nums[1::2])))
-        parts.append(outlines)
-    return parts
+def outlines(d):
+    out = []
+    for sub in re.findall(r"M[^MZ]*", d):
+        nums = [float(v) for v in re.findall(r"-?\d+\.?\d*", sub)]
+        out.append(list(zip(nums[0::2], nums[1::2])))
+    return out
 
 
-MARK = load_mark()
+def paths(text):
+    return [outlines(d) for d in re.findall(r'\bd="([^"]*)"', text)]
+
+
+def read(name):
+    with open(os.path.join(LOGO, name), encoding="utf-8") as f:
+        return f.read()
+
+
+def rasterise(parts, width, height, scale, ox=0.0, oy=0.0):
+    """Parts as an antialiased alpha mask, drawn large and reduced. A part's later outlines are holes."""
+    ss = 8 if max(width, height) >= 128 else 16
+    acc = np.zeros((height * ss, width * ss), dtype=np.uint8)
+    for part in parts:
+        m = Image.new("L", (width * ss, height * ss), 0)
+        d = ImageDraw.Draw(m)
+        for i, outline in enumerate(part):
+            d.polygon([((x * scale + ox) * ss, (y * scale + oy) * ss) for x, y in outline], fill=255 if i == 0 else 0)
+        acc = np.maximum(acc, np.asarray(m))
+    return Image.fromarray(acc).resize((width, height), Image.LANCZOS)
+
+
+MARK = paths(read("mark.svg"))
+WORD_TEXT = read("wordmark.svg")
+WORD_W, WORD_H = [float(v) for v in re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', WORD_TEXT).groups()]
+LETTERS = paths(WORD_TEXT[WORD_TEXT.index('id="letters"'):WORD_TEXT.index('id="leaves"')])
+LEAVES = paths(WORD_TEXT[WORD_TEXT.index('id="leaves"'):])
 
 
 def mark_mask(size, inset=0.0):
-    """The mark as an antialiased alpha mask, drawn large and reduced. `inset` is a margin as a fraction."""
-    ss = 8 if size >= 128 else 16
-    big = size * ss
-    span = big * (1.0 - 2.0 * inset)
-    off = big * inset
-    all_parts = np.zeros((big, big), dtype=np.uint8)
-    for outlines in MARK:
-        m = Image.new("L", (big, big), 0)
-        d = ImageDraw.Draw(m)
-        for i, outline in enumerate(outlines):
-            d.polygon([(x / 100.0 * span + off, y / 100.0 * span + off) for x, y in outline], fill=255 if i == 0 else 0)
-        all_parts = np.maximum(all_parts, np.asarray(m))
-    return Image.fromarray(all_parts).resize((size, size), Image.LANCZOS)
+    k = size * (1.0 - 2.0 * inset) / 100.0
+    return rasterise(MARK, size, size, k, size * inset, size * inset)
 
 
 def coloured(mask, rgb):
@@ -65,20 +78,29 @@ def coloured(mask, rgb):
     return img
 
 
-def wordmark(text_rgb, sub_rgb, height=160):
-    font = ImageFont.truetype(os.path.join(ROOT, "assets", "fonts", "AlbertSans-Bold.ttf"), int(height * 0.6))
-    mark = coloured(mark_mask(height), LIME)
-    gap = int(height * 0.24)
-    w1 = font.getlength("Citron ")
-    w2 = font.getlength("Lite")
-    width = height + gap + int(w1 + w2) + int(height * 0.1)
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    img.alpha_composite(mark, (0, 0))
-    d = ImageDraw.Draw(img)
-    asc, desc = font.getmetrics()
-    y = (height - (asc + desc)) / 2 + height * 0.08
-    d.text((height + gap, y), "Citron ", font=font, fill=text_rgb + (255,))
-    d.text((height + gap + w1, y), "Lite", font=font, fill=sub_rgb + (255,))
+def word_masks(height):
+    width = int(round(WORD_W * height / WORD_H))
+    k = height / WORD_H
+    return rasterise(LETTERS, width, height, k), rasterise(LEAVES, width, height, k)
+
+
+def wordmark(letters_rgb, tag_rgb, height=160):
+    letters, leaves = word_masks(height)
+    font = ImageFont.truetype(os.path.join(ROOT, "assets", "fonts", "SchibstedGrotesk-Bold.ttf"), int(height * 0.27))
+    tag_w = int(font.getlength("Lite") + height * 0.2)
+    tag_h = int(height * 0.36)
+    gap = int(height * 0.1)
+    img = Image.new("RGBA", (letters.width + gap + tag_w, height), (0, 0, 0, 0))
+    img.alpha_composite(coloured(letters, letters_rgb), (0, 0))
+    img.alpha_composite(coloured(leaves, LIME), (0, 0))
+    big = 4
+    tag = Image.new("RGBA", (tag_w * big, tag_h * big), (0, 0, 0, 0))
+    ImageDraw.Draw(tag).rounded_rectangle([0, 0, tag_w * big - 1, tag_h * big - 1], radius=int(tag_h * big * 0.24), fill=LIME + (40,))
+    tag = tag.resize((tag_w, tag_h), Image.LANCZOS)
+    d = ImageDraw.Draw(tag)
+    left, top, right, bottom = d.textbbox((0, 0), "Lite", font=font)
+    d.text(((tag_w - (right - left)) / 2 - left, (tag_h - (bottom - top)) / 2 - top), "Lite", font=font, fill=tag_rgb + (255,))
+    img.alpha_composite(tag, (letters.width + gap, height - tag_h - int(height * 0.05)))
     return img
 
 
@@ -91,19 +113,20 @@ def icon():
 
 
 def logo_data():
-    size = 128
-    px = mark_mask(size).tobytes()
-    rows = []
-    for y in range(size):
-        rows.append("    " + "".join("0xFF,0xFF,0xFF,0x%02X," % px[y * size + x] for x in range(size)))
+    letters, leaves = word_masks(TAG_HEIGHT)
+    data = letters.tobytes() + leaves.tobytes()
     text = [
-        "// Generated by tools/make_logo.py: the Citron Lite mark as a white mask, tinted when drawn.",
+        "// Generated by tools/make_logo.py: the wordmark's letters, then its leaves, as alpha masks one over",
+        "// the other, tinted when drawn.",
         "#pragma once",
         "",
         "namespace citron {",
-        "inline constexpr int kLogoW = %d, kLogoH = %d;" % (size, size),
-        "inline constexpr unsigned char kLogoRGBA[] = {",
-    ] + rows + ["};", "}  // namespace citron", ""]
+        "inline constexpr int kLogoW = %d, kLogoH = %d;   // of each mask" % (letters.width, letters.height),
+        "inline constexpr unsigned char kLogoAlpha[] = {",
+    ]
+    for at in range(0, len(data), 48):
+        text.append("    " + ",".join(str(b) for b in data[at:at + 48]) + ",")
+    text += ["};", "}  // namespace citron", ""]
     path = os.path.join(ROOT, "include", "citron", "logo_data.h")
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(text))
@@ -111,10 +134,9 @@ def logo_data():
 
 
 def main():
-    out = os.path.join(ROOT, "assets", "logo")
-    coloured(mark_mask(512), LIME).save(os.path.join(out, "mark.png"))
-    wordmark(PAPER, (138, 144, 160)).save(os.path.join(out, "wordmark-dark.png"))
-    wordmark(INK, (106, 112, 128)).save(os.path.join(out, "wordmark-light.png"))
+    coloured(mark_mask(512), LIME).save(os.path.join(LOGO, "mark.png"))
+    wordmark(TEXT, LIME).save(os.path.join(LOGO, "wordmark-dark.png"))
+    wordmark(INK, (98, 124, 16)).save(os.path.join(LOGO, "wordmark-light.png"))
     print(icon())
     print(logo_data())
     return 0

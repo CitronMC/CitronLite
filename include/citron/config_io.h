@@ -34,6 +34,9 @@ void KeepKnown(std::map<std::string, ModuleState>& mods, const std::vector<Modul
 bool Write(const std::string& path, const std::map<std::string, ModuleState>& mods, unsigned accent);
 bool Read(const std::string& path, std::map<std::string, ModuleState>& mods, unsigned* accent = nullptr);
 void Delete(const std::string& name);
+// What the list shows about a config without loading it.
+struct Info { int enabled = 0; long long savedAt = 0; };
+Info Peek(const std::string& name);
 
 std::string SaveDialog(const std::string& defaultName);
 std::string OpenDialog();

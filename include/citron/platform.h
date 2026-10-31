@@ -49,9 +49,10 @@ struct Window {
 };
 
 // width and height are the design size; initialScale opens the window that much larger (the
-// monitor's scale) so it is sharp from the first frame.
+// monitor's scale) so it is sharp from the first frame. An offscreen window is for captures and test
+// sessions: past the desktop's edge, it never takes the focus and has no taskbar button.
 bool Init(Window& w, int width, int height, const wchar_t* title, float cornerRadius,
-          float initialScale = 1.f);
+          float initialScale = 1.f, bool offscreen = false);
 // Brings the instance already running to the front, Taskbar Hide or not.
 bool ActivateExistingInstance(unsigned waitMs = 0);
 

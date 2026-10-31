@@ -1,4 +1,6 @@
 #include "citron/ui_script.h"
+#include "ui/draw.h"
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -21,6 +23,7 @@ bool UiScript::Load(const std::string& path) {
     if (path.empty()) return false;
     std::ifstream in(path);
     if (!in) return false;
+    settle = kSettleFrames;   // the first steps name controls, so the panel has to have drawn them
     std::string text;
     while (std::getline(in, text)) {
         if (!text.empty() && text.back() == '\r') text.pop_back();
@@ -28,7 +31,13 @@ bool UiScript::Load(const std::string& path) {
         std::istringstream row(text);
         Line l;
         row >> l.op;
-        if (l.op == "type" || l.op == "shot") {
+        const bool placed = l.op == "move" || l.op == "click" || l.op == "down";
+        if (placed && (row >> std::ws).peek() == '@') {
+            row >> l.target;
+            l.target.erase(0, 1);
+            l.a = l.b = 0.5f;
+        }
+        if (l.op == "type" || l.op == "shot" || l.op == "rects") {
             std::getline(row >> std::ws, l.text);
             lines.push_back(l);
         } else if (l.op == "click") {
@@ -71,17 +80,28 @@ bool UiScript::Step(platform::Window& w, std::string& capture) {
     settle = kSettleFrames;
 
     auto point = [&] {
-        pointer = MAKELPARAM((WORD)(short)std::lround(l.a * w.scale), (WORD)(short)std::lround(l.b * w.scale));
+        float x = l.a, y = l.b;
+        if (!l.target.empty()) {
+            ui::R r;
+            if (!ui::ItemRect(l.target, r)) {
+                if (std::find(missing.begin(), missing.end(), l.target) == missing.end()) missing.push_back(l.target);
+                return false;
+            }
+            x = r.x + r.w * l.a;
+            y = r.y + r.h * l.b;
+        }
+        pointer = MAKELPARAM((WORD)(short)std::lround(x * w.scale), (WORD)(short)std::lround(y * w.scale));
         pointing = true;
         SendMessageW(h, WM_MOUSEMOVE, 0, pointer);
+        return true;
     };
     if (l.op == "move") {
-        point();
+        lost = !point();
     } else if (l.op == "down") {
-        point();
-        Button(h, l.button, true, pointer);
+        lost = !point();
+        if (!lost) Button(h, l.button, true, pointer);
     } else if (l.op == "up") {
-        Button(h, l.button, false, pointer);
+        if (!lost) Button(h, l.button, false, pointer);
     } else if (l.op == "wheel") {
         SendMessageW(h, WM_MOUSEWHEEL, MAKEWPARAM(0, (short)((int)l.a * WHEEL_DELTA)), pointer);
     } else if (l.op == "keydown" || l.op == "keyup") {
@@ -93,6 +113,9 @@ bool UiScript::Step(platform::Window& w, std::string& capture) {
         until = GetTickCount64() + (unsigned long long)l.a;
     } else if (l.op == "shot") {
         capture = l.text;
+    } else if (l.op == "rects") {
+        std::ofstream out(l.text, std::ios::binary);
+        for (const auto& [id, r] : ui::ItemRects()) out << r.x << ' ' << r.y << ' ' << r.w << ' ' << r.h << ' ' << id << '\n';
     }
     return true;
 }

@@ -35,10 +35,11 @@ enum class BindKind { Toggle, Hold, Fire, None };
 struct ModuleDef {
     std::string key, name, desc;
     Cat cat = Cat::Combat;
+    std::string group;           // the heading it sits under in its tab's list
     bool hasToggle = true;
     BindKind bind = BindKind::Toggle;
     bool names = false;          // keeps a list of player names (Friends)
-    bool hidden = false;         // saved with configs but not shown as a card
+    bool hidden = false;         // saved with configs but without a row of its own in the list
     std::vector<SliderDef> sliders;
     std::vector<CheckDef> checks;
     std::vector<ChoiceDef> choices;
@@ -78,7 +79,6 @@ struct ModuleState {
 
 struct AppState {
     Cat category = Cat::Combat;
-    std::string expanded;        // the open card
     std::string listening;       // the module whose bind is being captured
     std::vector<std::string> configs = {"Default"};
     std::string activeConfig = "Default";

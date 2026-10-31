@@ -39,8 +39,7 @@ Citron Lite supports **Minecraft 1.26.52 and 1.26.60** from the Microsoft Store 
 | Reach | Hits reach further, rolled between the two distances you set. |
 | Hitbox | Makes other players' hitboxes wider and taller. With Shadow Spoof the boxes you see stay normal. |
 | Ghost Hand | Hits players through blocks. |
-| Auto Clicker | Clicks for you while you hold attack. It can break blocks and leaves menus alone. |
-| Right Clicker | Clicks for you while you hold use. |
+| Auto Clicker | Clicks for you while you hold attack or use. Left and right each have their own switch, key and CPS. The left side can break blocks and leaves menus alone. |
 | Teams | Leaves your teammates alone, going by the colour of their name. Auto reads your own colour, or pick one. |
 | Friends | Leaves the players on your list alone. Middle click a player to add or remove them. |
 
@@ -85,7 +84,7 @@ Citron Lite supports **Minecraft 1.26.52 and 1.26.60** from the Microsoft Store 
 
 ## Keys
 
-Click the key button on a card and press any key, or any mouse button but the left one. A left click cancels and Escape clears the key. Nothing comes with a key already set, except Taskbar Hide on Insert.
+Open a module, press **Bind** next to its switch, then press any key, or any mouse button but the left one. A left click cancels and Escape clears the key. Nothing comes with a key already set, except Taskbar Hide on Insert.
 
 - Most modules switch on and off with their key.
 - Zoom works while its key is held.
@@ -132,7 +131,7 @@ You need MinGW-w64 with GCC 13 or newer ([WinLibs](https://winlibs.com) works we
 ./build_mingw.sh run      # build, then start it
 ```
 
-The tests include a full session through the real window: `tools/ui_tests.cpp` starts the exe at five window scales and drives it with real window messages, so a control that isn't where it is drawn fails there.
+The tests include a full session through the real window: `tools/ui_tests.cpp` starts the exe at five window scales, finds each control by its id and drives it with real window messages, so a control that isn't where it is drawn fails there. It also checks that the Settings columns line up.
 
 `CITRON_LTO=0` skips link-time optimisation for a faster build. CMake works too:
 
@@ -148,8 +147,8 @@ Start the exe with `--debug` (or put a `debug.txt` in `%LOCALAPPDATA%\CitronLite
 
 The client never runs code inside the game. It opens Minecraft's process and works on its memory from outside:
 
-- **Reading.** A pointer walk from one global the game stores at startup leads to the client instance, the game's clock and your player. Positions, boxes, name tags and inventory come from the player's entity components.
-- **Capturing.** A few small code caves note what the game is working on as it runs: the camera, every actor being drawn, the block or entity under the crosshair, your hurt time.
+- **Reading.** A pointer walk from one global the game stores at startup leads to the client instance, the game's clock and your player. The entity registry behind your player lists every actor in the world, and positions, boxes, name tags and inventory come from their components.
+- **Capturing.** A few small code caves note what the game is working on as it runs: the camera, the block or entity under the crosshair, your hurt time.
 - **Changing.** Some modules write values (the camera for Aim Assist, your velocity for Velocity), some point an instruction at a number of their own (Reach), some skip one instruction (No Jump Delay).
 
 Every patch is written with the game's threads paused, and all of them come back out when the client closes.
@@ -163,17 +162,17 @@ src/core/        game.cpp     the supported builds: where each site is, and stru
                  game_bindings.cpp  the game's own key bindings, from its options file
 src/backend/     the worker thread: attaching, the world each tick, input hooks, timing
 src/modules/     one file per module or group, by tab
-src/ui/          draw.cpp (widgets) and panel.cpp (the window)
+src/ui/          draw.cpp (the design kit) and panel.cpp (the window)
 src/app.cpp      state, configs and hotkeys       src/model.cpp  the module catalog
-tools/           tests, the probe, and the scripts that make the logo and embed the fonts
-assets/logo/     mark.svg is the master; tools/make_logo.py makes the icon and the rest from it
+tools/           tests, the probe, and the scripts that make the logo and icons and embed the fonts
+assets/logo/     mark.svg and wordmark.svg are the masters; tools/make_logo.py makes the rest from them
 ```
 
 ### A new Minecraft version
 
 Everything that depends on the game build is in `src/core/game.cpp`: a table of sites (an address, plus a byte pattern to check it) and a table of structure offsets for each build. When the version is unknown or a hotfix moves the code, the patterns are searched for instead, and the build whose sites are found where it expects them wins.
 
-To add a version, find each site and offset in the new build, add both tables, then run `./build_mingw.sh probe` with the game open: every site should read `ok`, and in a world it prints your position, box and hotbar. `probe --live` also puts the camera and actor captures in for two seconds and lists what they saw.
+To add a version, find each site and offset in the new build, add both tables, then run `./build_mingw.sh probe` with the game open: every site should read `ok`, and in a world it prints your position, box and hotbar and the actors around you. `probe --live` also puts the camera capture in for two seconds and prints what it saw.
 
 ### Contributing
 
@@ -183,4 +182,4 @@ Issues and pull requests are welcome. Keep changes small and focused, run the te
 
 Citron Lite is free software under the [GNU General Public License v3.0](LICENSE).
 
-Albert Sans is under the SIL Open Font License (`assets/fonts/OFL.txt`). Dear ImGui is under the MIT License.
+Hanken Grotesk, Schibsted Grotesk and JetBrains Mono are under the SIL Open Font License (`assets/fonts`). The icons are from [Lucide](https://lucide.dev), under the ISC License (`assets/icons`). Dear ImGui is under the MIT License.

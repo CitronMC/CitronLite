@@ -1,3 +1,9 @@
+// The panel: a top bar over a page. A module tab is the list on the left and the open module on the
+// right. Settings is two columns of cards that always fill the page: both columns share their gutters
+// and end on one line, and only the config list scrolls.
+//
+//   920 x 600, radius 14. Top bar 56: the wordmark at 22, the tabs after it, the game's status, minimise
+//   and close on the right. Below it 16 of padding round the page: a list 272 wide, a gap of 12.
 #include "citron/app.h"
 #include "citron/config_io.h"
 #include "citron/telemetry.h"
@@ -10,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 
 namespace citron {
 
@@ -17,11 +24,48 @@ using namespace ui;
 
 namespace {
 
-constexpr float kHeaderH = 60.f, kCardHeadH = 64.f, kRowGap = 14.f;
-constexpr float kCfgRowH = 48.f, kCfgRowGap = 4.f;
-R g_cfgList;   // where the config list was drawn, for the wheel
+constexpr float kTopBarH = 56.f, kPad = 16.f, kListW = 272.f, kGap = 12.f;
+constexpr float kFilterH = 30.f, kRowH = 36.f, kGroupH = 26.f, kGroupGap = 10.f;
+constexpr float kDetailPad = 24.f, kDetailHeadH = 84.f, kSetRowH = 34.f, kCheckRowH = 30.f, kLabelW = 148.f;
+constexpr float kNameRowH = 34.f;
+constexpr float kCardPad = 18.f, kCardHeadH = 42.f, kSwitchRowH = 42.f, kCfgRowH = 46.f;
+constexpr int kModuleTabs = 4;
+
+// Settings: two columns over the page's 528. Configs is as tall as the two cards beside it and the
+// gutter between them, so the lower cards start on one line.
+constexpr float kAppearanceH = 80.f, kClientH = kCardHeadH + 5.f * kSwitchRowH + 6.f, kLowerH = 166.f;
+constexpr float kConfigsH = kAppearanceH + kGap + kClientH;
+static_assert(kConfigsH + kGap + kLowerH == kPanelH - kTopBarH - kPad);
+
+struct PanelState {
+    std::string selected[kModuleTabs];    // the open module of each module tab
+    float listSaved[kModuleTabs] = {};    // where each tab's list was left
+    int filter = 0;                       // the list: all, on, bound
+    std::vector<std::string> sticky;      // rows that stopped matching the filter while you looked
+    int clickerSide = 0;                  // Auto Clicker's card: left, right
+    float listScroll = 0.f, listTarget = 0.f;
+    float detailScroll = 0.f, detailTarget = 0.f;
+    float cfgScroll = 0.f, cfgTarget = 0.f;
+    double tabChangedAt = -10.0, moduleChangedAt = -10.0, pickerAt = -10.0;
+    bool revealSelected = false;
+    bool pickerOpen = false;
+    R pickerAnchor;
+    std::string confirmDelete;
+    std::string tip;                      // the status's words, drawn over the page
+    R tipAnchor;
+    float tabsX0 = 0.f, tabsX1 = 0.f, rightX0 = kPanelW;
+    bool wheelTaken = false;
+} ps;
 
 void Open(const wchar_t* url) { ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL); }
+
+bool WheelOver(const R& area) {
+    if (ps.wheelTaken || ImGui::GetIO().MouseWheel == 0.f) return false;
+    const ImVec2 m = Mouse();
+    if (!area.contains(m.x, m.y)) return false;
+    ps.wheelTaken = true;
+    return true;
+}
 
 std::string ImGuiKeyLabel(ImGuiKey k) {
     if (k >= ImGuiKey_A && k <= ImGuiKey_Z) return std::string(1, (char)('A' + (k - ImGuiKey_A)));
@@ -74,482 +118,473 @@ std::string ImGuiKeyLabel(ImGuiKey k) {
     }
 }
 
-float ChoiceHeight() { return 27.f; }
+// Auto Clicker is two modules behind one row: the left side and the hidden right side, picked in its
+// card. The row is lit while either side is on, and the card's header works the side that is picked.
+bool IsClicker(const ModuleDef& d) { return d.key == "clicker"; }
 
-bool UseStepper(const ChoiceDef& c, float width) {
-    return c.options.size() > 4 || SegmentedWidth(c.options) > width * 0.62f;
+const ModuleDef& SideDef(const AppState& s, const ModuleDef& d) {
+    if (IsClicker(d) && ps.clickerSide == 1)
+        if (const ModuleDef* right = s.Def("rightclicker")) return *right;
+    return d;
 }
 
-}  // namespace
-
-void App::SyncPicker() {
-    const unsigned a = s.accent ? s.accent : kDefaultAccent;
-    float h, sa, v;
-    ImGui::ColorConvertRGBtoHSV(((a >> 16) & 255) / 255.f, ((a >> 8) & 255) / 255.f, (a & 255) / 255.f, h, sa, v);
-    if (sa > 0.f && v > 0.f) pickerH = h;
-    pickerS = sa;
-    pickerV = v;
+bool StateOn(const AppState& s, const std::string& key) {
+    const ModuleState* st = s.St(key);
+    return st && st->on;
 }
 
-bool App::IsDragHandle(float x, float y) const {
-    if (x < 0.f || x >= kPanelW || y < 0.f || y >= kHeaderH) return false;
-    if (x < 170.f) return true;
-    return x > tabsEnd + 4.f && x < controlsX - 8.f;
+bool RowOn(const AppState& s, const ModuleDef& d) { return StateOn(s, d.key) || (IsClicker(d) && StateOn(s, "rightclicker")); }
+
+// The key a row shows: the picked side's, else the other side's.
+std::string RowKey(const AppState& s, const ModuleDef& d) {
+    const ModuleState* st = s.St(SideDef(s, d).key);
+    if (st && !st->key.empty()) return st->key;
+    if (IsClicker(d))
+        for (const char* key : {"clicker", "rightclicker"})
+            if (const ModuleState* side = s.St(key); side && !side->key.empty()) return side->key;
+    return {};
 }
 
-// A module card.
-float App::CardBodyHeight(const ModuleDef& d, const ModuleState& st) const {
-    float h = 0.f;
-    int rows = 0;
-    auto add = [&](float rowH) {
-        h += rowH;
-        ++rows;
-    };
-    for (const auto& sl : d.sliders) add(42.f), (void)sl;
-    for (const auto& c : d.choices) add(ChoiceHeight()), (void)c;
-    for (const auto& c : d.checks) add(18.f), (void)c;
-    if (d.names) add(32.f + (st.names.empty() ? 0.f : 6.f + (float)st.names.size() * 34.f - 4.f));
-    if (!rows) return 0.f;
-    return 1.f + 14.f + h + kRowGap * (float)(rows - 1) + 16.f;
+bool Matches(const AppState& s, const ModuleDef& d, int filter) {
+    return filter == 0 || (filter == 1 && RowOn(s, d)) || (filter == 2 && !RowKey(s, d).empty());
 }
 
-void App::DrawCardBody(ImDrawList* dl, const ModuleDef& d, ModuleState& st, float x, float y, float w) {
-    char id[128];
-    float sy = y;
-    for (const auto& sl : d.sliders) {
-        std::snprintf(id, sizeof id, "m:%s:%s", d.key.c_str(), sl.key.c_str());
-        if (sl.range) {
-            float& lo = st.sliders[sl.key + "_min"];
-            float& hi = st.sliders[sl.key + "_max"];
-            RangeUI(dl, id, R{x, sy, w, 42.f}, sl.label.c_str(), lo, hi, sl.min, sl.max, sl.step, sl.unit.c_str());
-        } else {
-            SliderUI(dl, id, R{x, sy, w, 42.f}, sl.label.c_str(), st.sliders[sl.key], sl.min, sl.max, sl.step, sl.unit.c_str());
+int ModuleCount(const AppState& s, Cat c, int filter) {
+    int n = 0;
+    for (const ModuleDef& d : s.defs) n += d.cat == c && !d.hidden && Matches(s, d, filter);
+    return n;
+}
+
+const ModuleDef* SelectedModule(AppState& s) {
+    const int tab = (int)s.category;
+    if (tab >= kModuleTabs) return nullptr;
+    if (const ModuleDef* d = s.Def(ps.selected[tab]); d && d->cat == s.category && !d->hidden) return d;
+    for (const ModuleDef& d : s.defs)
+        if (d.cat == s.category && !d.hidden) {
+            ps.selected[tab] = d.key;
+            return &d;
         }
-        sy += 42.f + kRowGap;
-    }
-    for (const auto& c : d.choices) {
-        std::snprintf(id, sizeof id, "m:%s:%s", d.key.c_str(), c.key.c_str());
-        TextAt(dl, F(400, 13.f), x, sy + (27.f - 18.f) * 0.5f + LM(13.f).asc, Hex(kLabel), c.label.c_str());
-        int& sel = st.choices[c.key];
-        if (UseStepper(c, w)) StepperUI(dl, id, x + w, sy, c.options, sel);
-        else SegmentedUI(dl, id, x + w, sy, c.options, sel);
-        sy += ChoiceHeight() + kRowGap;
-    }
-    for (const auto& c : d.checks) {
-        std::snprintf(id, sizeof id, "m:%s:%s", d.key.c_str(), c.key.c_str());
-        bool on = st.checks.count(c.key) ? st.checks[c.key] : c.def;
-        SwitchRow(dl, id, R{x, sy, w, 18.f}, c.label.c_str(), on);
-        st.checks[c.key] = on;
-        sy += 18.f + kRowGap;
-    }
-    if (d.names) DrawFriends(dl, st, x, sy, w);
+    return nullptr;
 }
 
-// The friends list: a field to add a name, then one row per name with its remove button.
-float App::DrawFriends(ImDrawList* dl, ModuleState& st, float x, float y, float w) {
+void SetTab(AppState& s, Cat c) {
+    if (c == s.category) return;
+    const int from = (int)s.category, to = (int)c;
+    if (from < kModuleTabs) ps.listSaved[from] = ps.listTarget;
+    s.category = c;
+    ps.tabChangedAt = g_now;
+    ps.listScroll = ps.listTarget = to < kModuleTabs ? ps.listSaved[to] : 0.f;
+    ps.detailScroll = ps.detailTarget = 0.f;
+    ps.sticky.clear();
+    ps.confirmDelete.clear();
+}
+
+// The list.
+void DrawFilter(const AppState& s, const R& r) {
+    static const char* const kNames[3] = {"All", "On", "Bound"};
+    Fill(r, Hex(tok::kWell), 8.f);
+    const float segW = (r.w - 4.f) / 3.f;
+    const float hx = Spring(Id("filter-hl"), 2.f + segW * (float)ps.filter, 32.f, 0.86f);
+    Fill(R{r.x + hx, r.y + 2.f, segW, r.h - 4.f}, White(0.07f), 6.f);
+    for (int i = 0; i < 3; ++i) {
+        char id[16];
+        std::snprintf(id, sizeof id, "filter%d", i);
+        const R b{r.x + 2.f + segW * (float)i, r.y + 2.f, segW, r.h - 4.f};
+        const Hit h = Item(id, b);
+        PointerOnHover(h);
+        if (h.clicked && ps.filter != i) {
+            ps.filter = i;
+            ps.listTarget = 0.f;
+            ps.sticky.clear();
+        }
+        char num[8];
+        std::snprintf(num, sizeof num, "%d", ModuleCount(s, s.category, i));
+        const float tw = TextW(Face::Medium, 12.f, kNames[i]), nw = TextW(Face::MonoMedium, 10.5f, num);
+        const float x = b.cx() - (tw + 5.f + nw) * 0.5f;
+        const float k = Ease(Id(id, 4), ps.filter == i ? 1.f : 0.f, 0.14f);
+        TextMid(Face::Medium, 12.f, x, b.cy(), Mix(Hex(h.hovered ? tok::kLabel : tok::kMuted), Hex(tok::kText), k), kNames[i]);
+        TextMid(Face::MonoMedium, 10.5f, x + tw + 5.f, b.cy(), Mix(Hex(tok::kFaint), Hex(tok::kSub), k), num);
+    }
+}
+
+// Lit when on, an empty ring when off.
+void StatusLight(const char* key, float cx, float cy, bool on, bool hovered) {
+    const float k = Ease(Id(key, 5), on ? 1.f : 0.f, 0.16f);
+    const float r = Spring(Id(key, 6), on ? 4.f : 3.5f, 30.f, 0.6f);
+    if (k < 1.f) Ring(cx, cy, 3.5f, White(hovered ? 0.45f : 0.22f), 1.4f);
+    if (k > 0.f) Circle(cx, cy, r * k + 0.001f, AccentCol());
+}
+
+void DrawList(AppState& s, const R& col, float enter) {
+    PushAlpha(0.15f + 0.85f * enter);
+    DrawFilter(s, R{col.x, col.y, col.w, kFilterH});
+    const R area{col.x, col.y + kFilterH + 8.f, col.w, col.h - kFilterH - 8.f};
+
+    // Laid out first, so the scroll range and the selection are known. A row that stops matching
+    // while you look at it stays until the tab or the filter changes, so nothing jumps under the pointer.
+    struct ListLine { float y; const std::string* group; const ModuleDef* module; };
+    std::vector<ListLine> lines;
+    float cy = 0.f;
+    const std::string* group = nullptr;
+    for (const ModuleDef& d : s.defs) {
+        if (d.cat != s.category || d.hidden) continue;
+        const bool kept = std::find(ps.sticky.begin(), ps.sticky.end(), d.key) != ps.sticky.end();
+        if (!Matches(s, d, ps.filter) && !kept) continue;
+        if (!group || *group != d.group) {
+            if (group) cy += kGroupGap;
+            lines.push_back({cy, &d.group, nullptr});
+            cy += kGroupH;
+            group = &d.group;
+        }
+        lines.push_back({cy, &d.group, &d});
+        cy += kRowH;
+    }
+    const float content = cy + 6.f;
+    const float maxScroll = std::max(0.f, content - area.h);
+    const std::string selected = ps.selected[(int)s.category];
+    const ImGuiID highlight = Id("list-sel", (int)s.category * 16 + ps.filter);
+    if (ps.revealSelected) {
+        ps.revealSelected = false;
+        for (const ListLine& l : lines) {
+            if (!l.module || l.module->key != selected) continue;
+            if (l.y < ps.listTarget || l.y + kRowH > ps.listTarget + area.h) ps.listTarget = l.y - kGroupH - kGroupGap;
+            SnapSpring(highlight, l.y);
+        }
+    }
+    if (WheelOver(area)) ps.listTarget -= ImGui::GetIO().MouseWheel * 90.f;
+    ps.listTarget = std::clamp(ps.listTarget, 0.f, maxScroll);
+    ps.listScroll = std::clamp(Approach(ps.listScroll, ps.listTarget), 0.f, maxScroll);
+    const ScrollBarState bar = ScrollBarBegin("list-bar", area, ps.listScroll, ps.listTarget, content);
+
+    const float slide = (1.f - enter) * 8.f;
+    const float rowW = area.w - (bar.visible ? 12.f : 0.f);   // rows stop short of the scrollbar
+    PushClip(area);
+    // The highlight springs in list space, so scrolling moves it exactly with its row and only a
+    // change of selection animates it.
+    for (const ListLine& l : lines) {
+        if (!l.module || l.module->key != selected) continue;
+        const float hy = Spring(highlight, l.y, 34.f, 0.9f);
+        Fill(R{area.x, area.y + hy - ps.listScroll + slide, rowW, kRowH}, Hex(tok::kCard), 8.f);
+    }
+    for (const ListLine& l : lines) {
+        const float y = area.y + l.y - ps.listScroll + slide;
+        if (y + kRowH < area.y || y > area.y1()) continue;
+        if (!l.module) {
+            const float ty = y + kGroupH * 0.5f + 2.f;
+            TextMid(Face::SemiBold, 11.f, area.x + 12.f, ty, Hex(tok::kMuted), l.group->c_str());
+            const float lx = area.x + 12.f + TextW(Face::SemiBold, 11.f, l.group->c_str()) + 10.f;
+            Line(lx, ty, area.x + rowW - 10.f, ty, White(0.05f), 1.f);
+            continue;
+        }
+        const ModuleDef& m = *l.module;
+        const R row{area.x, y, rowW, kRowH};
+        char id[96];
+        // the light first, so it wins the hover over the row
+        std::snprintf(id, sizeof id, "light:%s", m.key.c_str());
+        const Hit hl = Item(id, R{row.x + 4.f, row.y + 4.f, 26.f, row.h - 8.f});
+        PointerOnHover(hl);
+        const bool on = RowOn(s, m);
+        if (hl.clicked && m.hasToggle) {
+            if (IsClicker(m) && on) {
+                s.St("clicker")->on = s.St("rightclicker")->on = false;
+            } else if (ModuleState* st = s.St(SideDef(s, m).key)) {
+                st->on = !st->on;
+            }
+            if (ps.filter != 0) ps.sticky.push_back(m.key);
+        }
+        std::snprintf(id, sizeof id, "row:%s", m.key.c_str());
+        const Hit h = Item(id, row);
+        PointerOnHover(h);
+        if (h.clicked && selected != m.key) {
+            ps.selected[(int)s.category] = m.key;
+            ps.moduleChangedAt = g_now;
+            ps.detailScroll = ps.detailTarget = 0.f;
+        }
+        const bool isSel = m.key == selected;
+        if (h.hovered && !isSel) Fill(row, White(0.025f), 8.f);
+        std::snprintf(id, sizeof id, "led:%s", m.key.c_str());
+        if (m.hasToggle) StatusLight(id, row.x + 17.f, row.cy(), on, hl.hovered);
+        else DrawIcon(Icon::ChevronRight, row.x + 17.f, row.cy(), 11.f, Hex(tok::kFaint));
+        float nameMax = row.w - 32.f - 12.f;
+        const std::string key = RowKey(s, m);
+        if (!key.empty()) {
+            const float kw = KeyCapWidth(key.c_str(), 10.f);
+            KeyCap(row.x1() - 10.f - kw, row.cy(), key.c_str(), false, 10.f);
+            nameMax -= kw + 8.f;
+        }
+        const Col nameCol = on ? Hex(tok::kText) : Hex(isSel || h.hovered ? tok::kLabel : tok::kIdle);
+        TextMid(Face::Medium, 13.f, row.x + 32.f, row.cy(), nameCol, Ellipsize(Face::Medium, 13.f, m.name, nameMax).c_str());
+    }
+    if (lines.empty()) {
+        const char* msg = ps.filter == 1 ? "Nothing on in this tab" : "Nothing bound in this tab";
+        TextMidC(Face::Regular, 12.5f, area.cx(), area.y + 40.f, Hex(tok::kMuted), msg);
+    }
+    PopClip();
+    ScrollBarEnd(bar);
+    PopAlpha();
+}
+
+// The open module.
+float SettingsHeight(const ModuleDef& shown, const ModuleDef& d, const ModuleState& st) {
+    float h = (float)(d.sliders.size() + d.choices.size() + (IsClicker(shown) ? 1 : 0)) * kSetRowH;
+    if (!d.checks.empty()) h += (h > 0.f ? 12.f : 0.f) + (float)((d.checks.size() + 1) / 2) * kCheckRowH;
+    if (d.names) h += (h > 0.f ? 16.f : 0.f) + 32.f + 8.f + (float)st.names.size() * kNameRowH;
+    return h;
+}
+
+// The list of names: a field to add one, then a row each.
+void DrawNames(ModuleState& st, float x, float y, float w) {
     std::string typed;
-    if (TextField(dl, "friends:add", R{x, y, w, 32.f}, "", "Add a name, or middle click a player in game", typed)) {
+    if (TextField("friends:add", R{x, y, w, 32.f}, "", "Add a name, or middle click a player in game", typed)) {
         const size_t a = typed.find_first_not_of(' '), b = typed.find_last_not_of(' ');
         const std::string name = a == std::string::npos ? std::string() : typed.substr(a, b - a + 1);
         if (!name.empty() && std::find(st.names.begin(), st.names.end(), name) == st.names.end()) st.names.push_back(name);
     }
-    float ry = y + 32.f + 6.f;
+    float ry = y + 32.f + 8.f;
     int remove = -1;
     for (size_t i = 0; i < st.names.size(); ++i) {
-        const R row{x, ry, w, 30.f};
+        const R row{x, ry, w, kNameRowH - 4.f};
+        Fill(row, White(0.03f), 7.f);
+        TextMid(Face::Regular, 13.f, row.x + 12.f, row.cy(), Hex(tok::kText), Ellipsize(Face::Regular, 13.f, st.names[i], w - 52.f).c_str());
         char id[64];
         std::snprintf(id, sizeof id, "friends:%d:x", (int)i);
-        const R xb{row.x1() - 30.f, row.y + 3.f, 24.f, 24.f};
-        const Hit hx = Item(id, xb);
-        Pointer(hx);
-        if (hx.clicked) remove = (int)i;
-        Fill(dl, row, White(hx.hovered ? 0.06f : 0.035f), 6.f);
-        TextAt(dl, F(400, 13.f), row.x + 10.f, row.y + 6.f + LM(13.f).asc, Hex(kText),
-               Ellipsize(F(400, 13.f), st.names[i], w - 50.f).c_str());
-        DrawCross(dl, xb.x + 12.f, xb.y + 12.f, 4.f, Hex(hx.hovered ? kDanger : kMuted), 1.5f);
-        ry += 34.f;
+        if (IconButton(id, R{row.x1() - 28.f, row.y + 3.f, 24.f, 24.f}, Icon::Close, 13.f, true).clicked) remove = (int)i;
+        ry += kNameRowH;
     }
     if (remove >= 0) st.names.erase(st.names.begin() + remove);
-    return ry - y;
 }
 
-float App::DrawCard(ImDrawList* dl, const ModuleDef& d, ModuleState& st, float x, float y, float w) {
-    char id[96];
-    const float bodyH = CardBodyHeight(d, st);
-    const bool open = bodyH > 0.f && s.expanded == d.key;
-    std::snprintf(id, sizeof id, "m:%s:h", d.key.c_str());
-    const float h = Animate(ImHashStr(id), open ? kCardHeadH + bodyH : kCardHeadH, 0.2f);
-    const R card{x, y, w, h};
-    Fill(dl, card, Hex(kCardBg), 10.f);
+// Numbers first, then choices, then the checkboxes in two columns.
+void DrawModuleSettings(AppState& s, const ModuleDef& shown, const ModuleDef& d, ModuleState& st, float x, float y, float w) {
+    char id[160];
+    const float y0 = y;
+    if (IsClicker(shown)) {
+        const R row{x, y, w, kSetRowH};
+        static const std::vector<std::string> kSides = {"Left", "Right"};
+        const bool lit[2] = {StateOn(s, "clicker"), StateOn(s, "rightclicker")};
+        TextMid(Face::Regular, 13.f, row.x, row.cy(), Hex(tok::kLabel), "Side");
+        Segmented("clicker-side", row.x1(), row.cy(), kSides, ps.clickerSide, lit);
+        y += kSetRowH;
+    }
+    for (const SliderDef& sl : d.sliders) {
+        std::snprintf(id, sizeof id, "set:%s:%s", d.key.c_str(), sl.key.c_str());
+        const R row{x, y, w, kSetRowH};
+        if (sl.range) RangeSlider(id, row, sl.label.c_str(), kLabelW, st.sliders[sl.key + "_min"], st.sliders[sl.key + "_max"], sl.min, sl.max, sl.step, sl.unit.c_str());
+        else Slider(id, row, sl.label.c_str(), kLabelW, st.sliders[sl.key], sl.min, sl.max, sl.step, sl.unit.c_str());
+        y += kSetRowH;
+    }
+    for (const ChoiceDef& c : d.choices) {
+        std::snprintf(id, sizeof id, "set:%s:%s", d.key.c_str(), c.key.c_str());
+        const R row{x, y, w, kSetRowH};
+        TextMid(Face::Regular, 13.f, row.x, row.cy(), Hex(tok::kLabel), c.label.c_str());
+        int& sel = st.choices[c.key];
+        // side by side while they fit beside the label, else one at a time between arrows
+        if (c.options.size() <= 4 && SegmentedWidth(c.options) <= w - kLabelW - 24.f) Segmented(id, row.x1(), row.cy(), c.options, sel);
+        else ChoiceStepper(id, row.x1(), row.cy(), c.options, sel);
+        y += kSetRowH;
+    }
+    if (!d.checks.empty()) {
+        if (y > y0) y += 12.f;
+        const float colW = (w - 16.f) * 0.5f;
+        for (size_t n = 0; n < d.checks.size(); ++n) {
+            const CheckDef& c = d.checks[n];
+            std::snprintf(id, sizeof id, "set:%s:%s", d.key.c_str(), c.key.c_str());
+            bool on = st.checks.count(c.key) ? st.checks[c.key] : c.def;
+            Checkbox(id, x + (float)(n % 2) * (colW + 16.f), y + (float)(n / 2) * kCheckRowH + kCheckRowH * 0.5f, colW, c.label.c_str(), on);
+            st.checks[c.key] = on;
+        }
+        y += (float)((d.checks.size() + 1) / 2) * kCheckRowH;
+    }
+    if (d.names) DrawNames(st, x, y + (y > y0 ? 16.f : 0.f), w);
+}
 
-    float right = card.x1() - 16.f;
+void DrawDetail(AppState& s, const R& card, float enter) {
+    Fill(card, Hex(tok::kCard), 12.f);
+    const ModuleDef* mp = SelectedModule(s);
+    if (!mp) return;
+    const ModuleDef& shown = *mp;
+    const ModuleDef& d = SideDef(s, shown);
+    ModuleState* stp = s.St(d.key);
+    if (!stp) return;
+    ModuleState& st = *stp;
+
+    // A new module slides in from a few pixels to the right while it fades up; after a tab change the
+    // content fades up with the list. The card itself does not move.
+    const float t = std::min(EaseOutT((float)((g_now - ps.moduleChangedAt) / 0.2)), 0.2f + 0.8f * enter);
+    PushAlpha(0.2f + 0.8f * t);
+    const float dx = (1.f - t) * 6.f;
+
+    // the header: name and description on the left, bind and switch on the right
+    const float hx = card.x + kDetailPad + dx, hy = card.y + 22.f;
+    char id[128];
+    float right = card.x1() - kDetailPad;
     if (d.hasToggle) {
-        const R sw{right - kSwitchW, card.y + 23.f, kSwitchW, kSwitchH};
-        std::snprintf(id, sizeof id, "m:%s:sw", d.key.c_str());
-        const Hit hs = Item(id, sw);
-        Pointer(hs);
-        if (hs.clicked) st.on = !st.on;
-        DrawSwitch(dl, sw, st.on, id);
-        right = sw.x - 12.f;
+        const R sw{right - 36.f, hy + 4.f, 36.f, 20.f};
+        std::snprintf(id, sizeof id, "sw:%s", d.key.c_str());
+        Switch(id, sw, st.on);
+        right = sw.x - 14.f;
     }
     if (d.bind != BindKind::None) {
-        const std::string label = st.key.empty() ? "NONE" : st.key;
-        const float bw = BindButtonWidth(label);
-        const R bb{right - bw, card.y + 20.f, bw, 24.f};
-        std::snprintf(id, sizeof id, "m:%s:bind", d.key.c_str());
+        std::snprintf(id, sizeof id, "bind:%s", d.key.c_str());
         const bool capturing = s.listening == d.key;
-        if (BindButton(dl, id, bb, label, capturing).clicked && s.listening.empty()) s.listening = d.key;
-        right = bb.x - 12.f;
+        const float bw = BindButtonWidth(st.key, capturing);
+        if (BindButton(id, right, hy + 14.f, st.key, capturing).clicked && s.listening.empty()) s.listening = d.key;
+        right -= bw + 12.f;
     }
-    std::snprintf(id, sizeof id, "m:%s:hdr", d.key.c_str());
-    const Hit hh = Item(id, R{card.x, card.y, card.w, kCardHeadH});
-    if (bodyH > 0.f) {
-        Pointer(hh);
-        if (hh.clicked) s.expanded = open ? std::string() : d.key;
-    }
-    TextAt(dl, F(600, 14.f), card.x + 16.f, card.y + 14.f + LM(14.f).asc, Hex(kText), d.name.c_str());
-    TextAt(dl, F(400, 11.5f), card.x + 16.f, card.y + 35.f + LM(11.5f).asc, Hex(kMuted),
-           Ellipsize(F(400, 11.5f), d.desc, right - (card.x + 16.f)).c_str());
+    Text(Face::TitleBold, 21.f, hx, hy + 22.f, Hex(tok::kText), Ellipsize(Face::TitleBold, 21.f, shown.name, right - hx).c_str());
+    Text(Face::Regular, 12.5f, hx, hy + 44.f, Hex(tok::kMuted), Ellipsize(Face::Regular, 12.5f, d.desc, card.w - 2.f * kDetailPad).c_str());
 
-    if (h > kCardHeadH + 0.5f) {
-        const float progress = bodyH > 0.f ? std::clamp((h - kCardHeadH) / bodyH, 0.f, 1.f) : 1.f;
-        const float outer = g_alpha;
-        g_alpha = outer * progress;
-        PushClip(card);
-        Fill(dl, R{card.x, card.y + kCardHeadH, card.w, 1.f}, White(0.05f));
-        DrawCardBody(dl, d, st, card.x + 16.f, card.y + kCardHeadH + 15.f, card.w - 32.f);
-        PopClip();
-        g_alpha = outer;
-    }
-    return h;
-}
+    // the settings, scrolling under the header
+    const R area{card.x, card.y + kDetailHeadH, card.w, card.h - kDetailHeadH - 1.f};
+    Line(card.x + kDetailPad, area.y - 0.5f, card.x1() - kDetailPad, area.y - 0.5f, White(0.055f), 1.f);
+    const float innerW = card.w - 2.f * kDetailPad;
+    const float setH = SettingsHeight(shown, d, st);
+    const float content = 20.f + (setH > 0.f ? setH : 20.f) + 20.f;
+    const float maxScroll = std::max(0.f, content - area.h);
+    if (WheelOver(area)) ps.detailTarget -= ImGui::GetIO().MouseWheel * 90.f;
+    ps.detailTarget = std::clamp(ps.detailTarget, 0.f, maxScroll);
+    ps.detailScroll = std::clamp(Approach(ps.detailScroll, ps.detailTarget), 0.f, maxScroll);
+    const ScrollBarState bar = ScrollBarBegin("detail-bar", R{area.x, area.y, area.w - 4.f, area.h - 6.f}, ps.detailScroll, ps.detailTarget, content);
 
-// The header.
-void App::DrawHeader(ImDrawList* dl, FrameOutput& out, ImTextureID mark) {
-    const R logo{18.f, 19.f, 22.f, 22.f};
-    if (mark) dl->AddImage(mark, Min(logo), Max(logo), ImVec2(0, 0), ImVec2(1, 1), Accent());
-    const float baseline = (kHeaderH - 21.f) * 0.5f + LM(15.f).asc;
-    TextAt(dl, F(700, 15.f), 48.f, baseline, Hex(kText), "Citron");
-    TextAt(dl, F(700, 15.f), 48.f + TextW(F(700, 15.f), "Citron ", 0.f), baseline, Hex(kMuted), "Lite");
-
-    float tx = 188.f;
-    for (const CatInfo& c : kCats) {
-        ImFont* f = F(600, 13.f);
-        const R b{tx, 13.f, 28.f + TextW(f, c.label), 34.f};
-        char id[32];
-        std::snprintf(id, sizeof id, "tab:%s", c.key);
-        const Hit h = Item(id, b);
-        Pointer(h);
-        if (h.clicked && s.category != c.cat) {
-            s.category = c.cat;
-            scrollY = scrollTarget = 0.f;
-            tabSwitchAt = g_now;
-        }
-        const bool active = s.category == c.cat;
-        const float bg = Animate(ImHashStr(id, 0, 0x1000), active ? 0.06f : 0.f, 0.15f);
-        const float k = Animate(ImHashStr(id, 0, 0x2000), active || h.hovered ? 1.f : 0.f, 0.15f);
-        Fill(dl, b, White(bg), 7.f);
-        TextAt(dl, f, b.x + 14.f, b.y + 8.f + LM(13.f).asc, Mix(Hex(kMuted), Hex(kText), k), c.label);
-        tx += b.w + 4.f;
-    }
-    tabsEnd = tx - 4.f;
-
-    // window controls
-    const R close{kPanelW - 14.f - 32.f, 14.f, 32.f, 32.f}, mini{close.x - 4.f - 32.f, 14.f, 32.f, 32.f};
-    controlsX = mini.x;
-    {
-        const Hit h = Item("close", close);
-        Pointer(h);
-        if (h.clicked) out.wantClose = true;
-        if (h.hovered) Fill(dl, close, White(0.06f), 8.f);
-        DrawCross(dl, close.x + 16.f, close.y + 16.f, 5.f, Hex(h.hovered ? kText : kMuted), 1.6f);
-    }
-    {
-        const Hit h = Item("minimize", mini);
-        Pointer(h);
-        if (h.clicked) out.wantMinimize = true;
-        if (h.hovered) Fill(dl, mini, White(0.06f), 8.f);
-        Line(dl, mini.x + 11.f, mini.y + 16.5f, mini.x + 21.f, mini.y + 16.5f, Hex(h.hovered ? kText : kMuted), 1.6f);
-    }
-
-    // the game, once it has been found
-    const BackendStatus st = backend.Status();
-    if (st.kind != BackendStatus::Kind::Searching) {
-        std::string text;
-        unsigned dot = g_accent;
-        if (st.kind == BackendStatus::Kind::Unsupported) {
-            text = "Unsupported version";
-            dot = kDanger;
-        } else {
-            const size_t cut = st.version.rfind('.');
-            text = "Minecraft " + (cut != std::string::npos ? st.version.substr(0, cut) : st.version);
-            if (st.kind == BackendStatus::Kind::Partial) dot = kWarn;
-        }
-        ImFont* f = F(600, 11.5f);
-        const float w = 10.f + 6.f + 7.f + TextW(f, text.c_str()) + 11.f;
-        const R pill{controlsX - 10.f - w, 20.f, w, 20.f};
-        if (pill.x > tabsEnd + 8.f) {
-            Fill(dl, pill, White(0.05f), 10.f);
-            Circle(dl, pill.x + 13.f, pill.y + 10.f, 3.f, Hex(dot));
-            TextAt(dl, f, pill.x + 23.f, pill.y + 3.f + LM(11.5f).asc, Hex(kLabel), text.c_str());
-            const Hit h = Item("status", pill);
-            if (h.hovered && (!st.detail.empty() || st.kind == BackendStatus::Kind::Unsupported)) {
-                const std::string tip = st.detail.empty() ? "Citron Lite runs on 1.26.52 and 1.26.60" : st.detail;
-                const float tw = TextW(F(400, 12.f), tip.c_str()) + 20.f;
-                const R box{std::max(8.f, pill.x1() - tw), pill.y1() + 6.f, tw, 26.f};
-                ShadowRect(dl, box, 7.f, 4.f, 12.f, 0.4f);
-                Fill(dl, box, Hex(0x1f232c), 7.f);
-                TextAt(dl, F(400, 12.f), box.x + 10.f, box.y + 5.f + LM(12.f).asc, Hex(kText), tip.c_str());
-            }
-        }
-    }
+    PushClip(R{area.x, area.y, area.w, area.h - 6.f});
+    const float x = card.x + kDetailPad + dx, y = area.y + 20.f - ps.detailScroll;
+    if (setH > 0.f) DrawModuleSettings(s, shown, d, st, x, y, innerW);
+    else TextMid(Face::Regular, 12.5f, x, y + 12.f, Hex(tok::kMuted), "No settings. Switch it on and it does its job.");
+    PopClip();
+    ScrollBarEnd(bar);
+    PopAlpha();
 }
 
 // Settings.
-float App::DrawThemeCard(ImDrawList* dl, float x0, float y, float w) {
-    const float boxH = 110.f;
-    const float h = 16.f + 19.f + 16.f + 18.f + (pickerOpen ? 16.f + boxH : 0.f) + 16.f;
-    Fill(dl, R{x0, y, w, h}, Hex(kCardBg), 10.f);
-    const float x = x0 + 16.f, iw = w - 32.f;
-    float cy = y + 16.f;
-    TextAt(dl, F(600, 14.f), x, cy + LM(14.f).asc, Hex(kText), "Theme");
-    cy += 19.f + 16.f;
-    TextAt(dl, F(400, 13.f), x, cy + LM(13.f).asc, Hex(kLabel), "Accent");
-    const unsigned accent = s.accent ? s.accent : kDefaultAccent;
-    const float size = 18.f, rad = 9.f, gap = 6.f;
-    const float xs = x + iw - (7.f * size + 6.f * gap), dotY = cy + 9.f;
+float CardHead(const R& r, const char* title) {
+    char id[48];
+    std::snprintf(id, sizeof id, "card:%s", title);
+    Note(id, r);
+    Fill(r, Hex(tok::kCard), 12.f);
+    Text(Face::Title, 15.f, r.x + kCardPad, r.y + 28.f, Hex(tok::kText), title);
+    return r.y + kCardHeadH;
+}
+
+// Label and description on the left, a switch on the right.
+bool SwitchRow(const char* id, float x, float y, float w, const char* label, const char* desc, bool& on) {
+    Text(Face::Regular, 13.f, x, y + 17.f, Hex(tok::kText), label);
+    Text(Face::Regular, 11.5f, x, y + 33.f, Hex(tok::kMuted), Ellipsize(Face::Regular, 11.5f, desc, w - 60.f).c_str());
+    return Switch(id, R{x + w - 30.f, y + kSwitchRowH * 0.5f - 8.5f, 30.f, 17.f}, on);
+}
+
+std::string Ago(long long when) {
+    if (when <= 0) return "not saved yet";
+    const long long d = (long long)std::time(nullptr) - when;
+    char b[48];
+    if (d < 45) return "saved just now";
+    if (d < 3600) std::snprintf(b, sizeof b, "saved %lld min ago", std::max(1LL, d / 60));
+    else if (d < 86400) std::snprintf(b, sizeof b, "saved %lld h ago", d / 3600);
+    else std::snprintf(b, sizeof b, "saved %lld days ago", d / 86400);
+    return b;
+}
+
+void DrawAppearance(AppState& s, const R& card) {
+    const float y = CardHead(card, "Appearance");
+    const float x = card.x + kCardPad, w = card.w - 2.f * kCardPad, cy = y + 11.f, d = 15.f;
+    TextMid(Face::Regular, 13.f, x, cy, Hex(tok::kLabel), "Accent");
+    // the presets, then one that stands for any colour
+    const R custom{x + w - d, cy - d * 0.5f, d, d};
+    unsigned accent = s.accent ? s.accent : tok::kLime;
+    if (Swatches("accent", custom.x - 8.f, cy, kSwatches, 7, accent, d)) s.accent = accent == tok::kLime ? 0u : accent;
     bool preset = false;
     for (unsigned c : kSwatches) preset |= c == accent;
-    for (int i = 0; i < 6; ++i) {
-        const float cx = xs + rad + (float)i * (size + gap);
-        char id[32];
-        std::snprintf(id, sizeof id, "th:c%d", i);
-        const Hit hc = Item(id, R{cx - rad, dotY - rad, size, size});
-        Pointer(hc);
-        if (hc.clicked) {
-            s.accent = kSwatches[i] == kDefaultAccent ? 0u : kSwatches[i];
-            SyncPicker();
-            pickerOpen = false;
-        }
-        if (accent == kSwatches[i]) SelectionRing(dl, cx, dotY, rad, kCardBg);
-        Circle(dl, cx, dotY, rad, Hex(kSwatches[i]));
+    const Hit h = Item("accent:custom", custom.Inset(-2.f));
+    PointerOnHover(h);
+    if (h.clicked) {
+        ps.pickerOpen = true;
+        ps.pickerAt = g_now;
     }
-    {
-        const float cx = xs + rad + 6.f * (size + gap);
-        const Hit hc = Item("th:custom", R{cx - rad, dotY - rad, size, size});
-        Pointer(hc);
-        if (hc.clicked) pickerOpen = !pickerOpen;
-        if (!preset) {
-            SelectionRing(dl, cx, dotY, rad, kCardBg);
-            Circle(dl, cx, dotY, rad, Hex(accent));
-        } else {
-            DrawHueWheel(dl, cx, dotY, rad);
-        }
+    if (preset) {
+        HueRing(custom.cx(), cy, d * 0.5f);
+    } else {
+        Ring(custom.cx(), cy, d * 0.5f + 3.5f, Hex(tok::kText), 1.5f);
+        Circle(custom.cx(), cy, d * 0.5f, Hex(accent));
     }
-    cy += 18.f;
-    if (pickerOpen) {
-        cy += 16.f;
-        const R sv{x, cy, 200.f, boxH}, hue{x + 210.f, cy, 14.f, boxH};
-        const ImVec2 mouse = ImGui::GetIO().MousePos;
-        const Hit hs = Item("th:sv", sv);
-        Pointer(hs);
-        if (hs.active) {
-            pickerS = std::clamp((mouse.x / g_s - sv.x) / sv.w, 0.f, 1.f);
-            pickerV = 1.f - std::clamp((mouse.y / g_s - sv.y) / sv.h, 0.f, 1.f);
-            s.accent = HsvToRgb(pickerH, pickerS, pickerV);
-        }
-        const Hit hh = Item("th:hue", hue);
-        Pointer(hh);
-        if (hh.active) {
-            pickerH = std::min(std::clamp((mouse.y / g_s - hue.y) / hue.h, 0.f, 1.f), 0.9999f);
-            s.accent = HsvToRgb(pickerH, pickerS, pickerV);
-        }
-        const ImU32 hueCol = Hex(HsvToRgb(pickerH, 1.f, 1.f));
-        dl->AddRectFilledMultiColor(Min(sv), Max(sv), White(1.f), hueCol, hueCol, White(1.f));
-        dl->AddRectFilledMultiColor(Min(sv), Max(sv), Black(0.f), Black(0.f), Black(1.f), Black(1.f));
-        for (int i = 0; i < 6; ++i) {
-            const R seg{hue.x, hue.y + hue.h * (float)i / 6.f, hue.w, hue.h / 6.f};
-            const ImU32 top = Hex(HsvToRgb((float)i / 6.f, 1.f, 1.f)), bottom = Hex(HsvToRgb(i == 5 ? 0.f : (float)(i + 1) / 6.f, 1.f, 1.f));
-            dl->AddRectFilledMultiColor(Min(seg), Max(seg), top, top, bottom, bottom);
-        }
-        const ImVec2 mk(Dv(sv.x + pickerS * sv.w), Dv(sv.y + (1.f - pickerV) * sv.h));
-        dl->AddCircle(mk, Dv(6.5f), Black(0.5f), 0, Dv(1.f));
-        dl->AddCircle(mk, Dv(5.5f), White(1.f), 0, Dv(1.5f));
-        const float hy = hue.y + pickerH * hue.h;
-        Fill(dl, R{hue.x - 2.f, hy - 2.f, hue.w + 4.f, 4.f}, White(1.f), 1.f);
-        char hex[16];
-        std::snprintf(hex, sizeof hex, "#%06X", accent & 0xFFFFFFu);
-        TextAt(dl, F(600, 11.f), x + 240.f, cy + LM(11.f).asc, Hex(kMuted), "HEX", 0.66f);
-        TextAt(dl, F(600, 14.f), x + 240.f, cy + 19.f + LM(14.f).asc, Hex(kText), hex);
-    }
-    return h;
+    ps.pickerAnchor = custom;
 }
 
-float App::DrawClientCard(ImDrawList* dl, float x0, float y, float w) {
+// Any colour: over the page, so opening it moves nothing. A click outside or Escape puts it away.
+void DrawAccentPicker(AppState& s) {
+    const float w = 252.f, h = 14.f + PickerHeight() + 14.f + 14.f + 14.f;
+    const R card{ps.pickerAnchor.x1() - w, ps.pickerAnchor.y1() + 12.f, w, h};
+    const ImVec2 m = Mouse();
+    if ((ImGui::IsMouseClicked(0) && !card.contains(m.x, m.y)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        ps.pickerOpen = false;
+        return;
+    }
+    PushAlpha(EaseOutT((float)((g_now - ps.pickerAt) / 0.14)));
+    Shadow(card, 12.f, 12.f, 32.f, 0.55f);
+    Fill(card, Hex(tok::kCard), 12.f);
+    Stroke(card, White(0.08f), 12.f, 1.f);
+    unsigned rgb = s.accent ? s.accent : tok::kLime;
+    if (ColourPicker("accent-pick", card.x + 14.f, card.y + 14.f, card.w - 28.f, rgb)) s.accent = rgb ? rgb : 1u;
+    char hex[16];
+    std::snprintf(hex, sizeof hex, "#%06X", rgb & 0xFFFFFFu);
+    TextMid(Face::MonoMedium, 12.5f, card.x + 14.f, card.y1() - 21.f, Hex(tok::kLabel), hex);
+    const R chip{card.x1() - 14.f - 28.f, card.y1() - 21.f - 7.f, 28.f, 14.f};
+    Fill(chip, Hex(rgb), 4.f);
+    PopAlpha();
+}
+
+void DrawClient(AppState& s, const R& card) {
+    float y = CardHead(card, "Client");
+    const float x = card.x + kCardPad, w = card.w - 2.f * kCardPad;
     ModuleState* stream = s.St("streamhide");
     ModuleState* task = s.St("taskbarhide");
-    ModuleState* sd = s.St("selfdestruct");
-    const float h = 16.f + 19.f + 16.f + (18.f + kRowGap) + (24.f + kRowGap) + (18.f + 20.f) + (24.f + kRowGap) +
-                    3.f * (18.f + kRowGap) - kRowGap + 16.f;
-    Fill(dl, R{x0, y, w, h}, Hex(kCardBg), 10.f);
-    const float x = x0 + 16.f, iw = w - 32.f;
-    float cy = y + 16.f;
-    TextAt(dl, F(600, 14.f), x, cy + LM(14.f).asc, Hex(kText), "Window");
-    cy += 19.f + 16.f;
-    if (stream) SwitchRow(dl, "set:stream", R{x, cy, iw, 18.f}, "Stream Hide", stream->on);
-    cy += 18.f + kRowGap;
-    auto keyRow = [&](const char* id, const char* label, ModuleState* st, const char* module, bool toggle) {
-        TextAt(dl, F(400, 13.f), x, cy + 3.f + LM(13.f).asc, Hex(kLabel), label);
-        float right = x + iw;
-        if (toggle && st) {
-            char sid[48];
-            std::snprintf(sid, sizeof sid, "%s:sw", id);
-            const R sw{right - kSwitchW, cy + 3.f, kSwitchW, kSwitchH};
-            const Hit hs = Item(sid, sw);
-            Pointer(hs);
-            if (hs.clicked) st->on = !st->on;
-            DrawSwitch(dl, sw, st->on, sid);
-            right = sw.x - 12.f;
-        }
-        if (st) {
-            const std::string lbl = st->key.empty() ? "NONE" : st->key;
-            const float bw = BindButtonWidth(lbl);
-            if (BindButton(dl, id, R{right - bw, cy, bw, 24.f}, lbl, s.listening == module).clicked && s.listening.empty())
-                s.listening = module;
-        }
-        cy += 24.f + kRowGap;
-    };
-    keyRow("set:task", "Taskbar Hide", task, "taskbarhide", true);
+    if (stream) SwitchRow("set:stream", x, y, w, "Stream Hide", "Hidden from screen capture and recordings", stream->on);
+    y += kSwitchRowH;
+    if (task) {
+        SwitchRow("set:task", x, y, w, "Taskbar Hide", "No taskbar button, and its key flips that", task->on);
+        if (BindButton("set:task:bind", x + w - 30.f - 12.f, y + kSwitchRowH * 0.5f, task->key, s.listening == "taskbarhide").clicked && s.listening.empty())
+            s.listening = "taskbarhide";
+    }
+    y += kSwitchRowH;
     if (task) {
         bool hideWindow = task->checks["hideWindow"];
-        SwitchRow(dl, "set:taskwin", R{x, cy, iw, 18.f}, "Also Hide The Window", hideWindow);
+        SwitchRow("set:taskwin", x, y, w, "Also Hide The Window", "The window goes too until you press the key", hideWindow);
         task->checks["hideWindow"] = hideWindow;
     }
-    cy += 18.f + 20.f;
-    keyRow("set:sd", "Self-Destruct Key", sd, "selfdestruct", false);
-    if (sd) {
-        for (const auto& [key, label] : {std::pair<const char*, const char*>{"closeGame", "Also Close Minecraft"},
-                                         {"deleteExe", "Delete CitronLite.exe"}, {"wipeData", "Wipe Citron Lite's Data"}}) {
-            char id[48];
-            std::snprintf(id, sizeof id, "set:sd:%s", key);
-            bool on = sd->checks[key];
-            SwitchRow(dl, id, R{x, cy, iw, 18.f}, label, on);
-            sd->checks[key] = on;
-            cy += 18.f + kRowGap;
-        }
-    }
-    return h;
-}
-
-float App::DrawConfigsCard(ImDrawList* dl, float x0, float y, float w, float maxH, float dt) {
-    const float x = x0 + 16.f, iw = w - 32.f;
-    const float cy = y + 16.f;
-    const int n = (int)s.configs.size();
-    const float natural = n > 0 ? (float)n * kCfgRowH + (float)(n - 1) * kCfgRowGap : 0.f;
-    const float listTop = cy + 29.f + 12.f;
-    const float footer = 12.f + 29.f;
-    const float listMax = std::max(kCfgRowH, maxH - 16.f - 29.f - 12.f - footer - 16.f);
-    const float listH = std::min(natural, listMax);
-    const float h = 16.f + 29.f + 12.f + listH + footer + 16.f;
-    Fill(dl, R{x0, y, w, h}, Hex(kCardBg), 10.f);
-    TextAt(dl, F(600, 14.f), x, cy + (29.f - 19.f) * 0.5f + LM(14.f).asc, Hex(kText), "Configs");
-    const float wNew = TextButtonWidth("New config");
-    if (TextButton(dl, "cfg:new", R{x + iw - wNew, cy, wNew, 29.f}, "New config", true).clicked) {
-        NewConfig();
-        cfgScrollTarget = 1e9f;
-    }
-
-    const float maxScroll = std::max(0.f, natural - listH);
-    cfgScrollTarget = std::clamp(cfgScrollTarget, 0.f, maxScroll);
-    cfgScroll = std::clamp(SmoothTo(cfgScroll, cfgScrollTarget, dt), 0.f, maxScroll);
-    const R list{x, listTop, iw, listH};
-    g_cfgList = R{x0, listTop, w, listH};
-    PushClip(list);
-    std::string load, remove;
-    for (int i = 0; i < n; ++i) {
-        const std::string& name = s.configs[(size_t)i];
-        const R row{x, listTop - cfgScroll + (float)i * (kCfgRowH + kCfgRowGap), iw, kCfgRowH};
-        if (row.y1() < list.y || row.y > list.y1()) continue;
-        char id[64];
-        const bool confirming = confirmDelete == name;
-        const float xw = confirming ? 58.f : 24.f;
-        const R xb{row.x1() - 8.f - xw, row.y + 12.f, xw, 24.f}, pb{xb.x - 2.f - 24.f, row.y + 12.f, 24.f, 24.f};
-        std::snprintf(id, sizeof id, "cfg:%d:x", i);
-        const Hit hx = Item(id, xb);
-        Pointer(hx);
-        if (hx.clicked) {
-            if (confirming) remove = name;
-            else confirmDelete = name;
-        }
-        std::snprintf(id, sizeof id, "cfg:%d:pen", i);
-        const Hit hp = Item(id, pb);
-        Pointer(hp);
-        const ImGuiID renameId = ImHashStr(name.c_str());
-        if (hp.clicked) {
-            renaming = name;
-            BeginEdit(EditKind::Rename, renameId, name);
-        }
-        const bool editing = EditingTarget(EditKind::Rename, renameId);
-        const R field{row.x + 6.f, row.y + 12.f, pb.x - 8.f - (row.x + 6.f), 24.f};
-        if (editing) EditFieldHit(field);
-        std::snprintf(id, sizeof id, "cfg:%d:row", i);
-        const Hit hr = Item(id, row);
-        Pointer(hr);
-        if (hr.clicked && !editing && name != s.activeConfig) load = name;
-        if (hr.hovered && !editing && ImGui::IsMouseDoubleClicked(0)) {
-            renaming = name;
-            BeginEdit(EditKind::Rename, renameId, name);
-        }
-        if (!hx.hovered && confirming && ImGui::IsMouseClicked(0)) confirmDelete.clear();
-        const bool active = s.activeConfig == name;
-        if (hr.hovered || hx.hovered || hp.hovered) Fill(dl, row, White(0.05f), 7.f);
-        else if (active) Fill(dl, row, White(0.035f), 7.f);
-        std::string committed;
-        if (TakeCommit(EditKind::Rename, renameId, committed)) RenameConfig(name, committed);
-        if (editing) DrawEditField(dl, field, F(600, 13.f), 6.f);
-        else TextAt(dl, F(600, 13.f), row.x + 12.f, row.y + 15.f + LM(13.f).asc, Hex(kText), name.c_str());
-        if (active && !editing) TextRight(dl, F(600, 11.f), pb.x - 8.f, row.y + 17.f + LM(11.f).asc, Accent(), "ACTIVE", 0.66f);
-        DrawPencil(dl, pb.x + 12.f, pb.y + 12.f, Hex(hp.hovered || editing ? kText : kMuted));
-        if (confirming) {
-            Fill(dl, xb, Hex(kDanger, hx.hovered ? 0.3f : 0.2f), 6.f);
-            TextCenter(dl, F(600, 11.f), xb.x + xb.w * 0.5f, xb.y + 5.f + LM(11.f).asc, Hex(kDanger), "Delete");
-        } else {
-            DrawCross(dl, xb.x + 12.f, xb.y + 12.f, 4.5f, Hex(hx.hovered ? kDanger : kMuted), 1.5f);
-        }
-    }
-    PopClip();
-    ScrollBar(dl, "cfg:scroll", x0 + w - 8.f, listTop + 4.f, listH - 8.f, listH, natural, cfgScroll, cfgScrollTarget);
-    // the footer: files
-    const float fy = listTop + listH + 12.f;
-    const float wImp = TextButtonWidth("Import"), wExp = TextButtonWidth("Export"), wDir = TextButtonWidth("Open folder");
-    if (TextButton(dl, "cfg:import", R{x, fy, wImp, 29.f}, "Import", false).clicked) ImportConfig();
-    if (TextButton(dl, "cfg:export", R{x + wImp + 8.f, fy, wExp, 29.f}, "Export", false).clicked) ExportConfig();
-    if (TextButton(dl, "cfg:folder", R{x + iw - wDir, fy, wDir, 29.f}, "Open folder", false).clicked) cfgio::OpenFolder();
-    if (!load.empty()) {
-        SaveActive();
-        LoadConfig(load);
-    }
-    if (!remove.empty()) {
-        confirmDelete.clear();
-        DeleteConfig(remove);
-    }
-    return h;
-}
-
-float App::DrawAboutCard(ImDrawList* dl, float x0, float y, float w) {
-    const float h = 16.f + 19.f + 6.f + 16.f + 16.f + (18.f + kRowGap) + (24.f + kRowGap) + (18.f + 6.f + 16.f + 16.f) + 29.f + 16.f;
-    Fill(dl, R{x0, y, w, h}, Hex(kCardBg), 10.f);
-    const float x = x0 + 16.f, iw = w - 32.f;
-    float cy = y + 16.f;
-    TextAt(dl, F(600, 14.f), x, cy + LM(14.f).asc, Hex(kText), "Citron Lite");
-    TextRight(dl, F(600, 12.f), x + iw, cy + 2.f + LM(12.f).asc, Hex(kMuted), kVersionName);
-    cy += 19.f + 6.f;
-    TextAt(dl, F(400, 11.5f), x, cy + LM(11.5f).asc, Hex(kMuted), "Free and open source under the GPL-3.0");
-    cy += 16.f + 16.f;
-
+    y += kSwitchRowH;
     bool updates = updater::Enabled();
-    if (SwitchRow(dl, "about:updates", R{x, cy, iw, 18.f}, "Automatic Updates", updates)) updater::SetEnabled(updates);
-    cy += 18.f + kRowGap;
+    if (SwitchRow("set:updates", x, y, w, "Automatic Updates", "Installs new versions while you are not playing", updates)) updater::SetEnabled(updates);
+    y += kSwitchRowH;
+    bool presence = telemetry::Enabled();
+    if (SwitchRow("set:presence", x, y, w, "Anonymous Presence", "An anonymous ping to the Citron server", presence)) telemetry::SetEnabled(presence);
+}
+
+void DrawSelfDestruct(AppState& s, const R& card) {
+    const float y = CardHead(card, "Self-Destruct");
+    const float x = card.x + kCardPad, w = card.w - 2.f * kCardPad;
+    ModuleState* sd = s.St("selfdestruct");
+    if (!sd) return;
+    const float cy = y + 19.f;
+    TextMid(Face::Regular, 13.f, x, cy, Hex(tok::kLabel), "Puts the game back and closes Citron Lite");
+    if (BindButton("set:sd", x + w, cy, sd->key, s.listening == "selfdestruct").clicked && s.listening.empty()) s.listening = "selfdestruct";
+    const float colW = (w - 16.f) * 0.5f;
+    int n = 0;
+    for (const auto& [key, label] : {std::pair<const char*, const char*>{"closeGame", "Also Close Minecraft"},
+                                     {"deleteExe", "Delete CitronLite.exe"}, {"wipeData", "Wipe Citron Lite's Data"}}) {
+        char id[48];
+        std::snprintf(id, sizeof id, "set:sd:%s", key);
+        bool on = sd->checks[key];
+        Checkbox(id, x + (float)(n % 2) * (colW + 16.f), y + 46.f + (float)(n / 2) * kCheckRowH + kCheckRowH * 0.5f, colW, label, on);
+        sd->checks[key] = on;
+        ++n;
+    }
+}
+
+// Its rows sit on the lines of the card beside it.
+void DrawAbout(const R& card) {
+    const float y = CardHead(card, "Citron Lite");
+    const float x = card.x + kCardPad, w = card.w - 2.f * kCardPad;
+    TextMidR(Face::MonoMedium, 11.f, x + w, card.y + 23.f, Hex(tok::kSub), kVersionName);
+
+    const float cy = y + 19.f;
     const updater::Status us = updater::Get();
     const char* button = nullptr;
     switch (us.stage) {
@@ -560,12 +595,12 @@ float App::DrawAboutCard(ImDrawList* dl, float x0, float y, float w) {
     default: break;
     }
     const std::string line = us.detail.empty() ? std::string("Updates come from citron.lol") : us.detail;
-    float textW = iw;
+    float textW = w;
     if (button) {
-        const float bw = TextButtonWidth(button);
-        textW = iw - bw - 12.f;
+        const float bw = ButtonWidth(button);
+        textW = w - bw - 12.f;
         const bool primary = us.stage == updater::Stage::Available || us.stage == updater::Stage::Ready;
-        if (TextButton(dl, "about:upd", R{x + iw - bw, cy - 2.5f, bw, 29.f}, button, primary).clicked) {
+        if (Button("about:upd", R{x + w - bw, cy - 14.f, bw, 28.f}, button, primary ? ButtonKind::Primary : ButtonKind::Quiet).clicked) {
             if (us.stage == updater::Stage::Available) updater::InstallNow();
             else if (us.stage == updater::Stage::Ready) {
                 if (updater::RestartToApply()) PostQuitMessage(0);
@@ -574,14 +609,8 @@ float App::DrawAboutCard(ImDrawList* dl, float x0, float y, float w) {
             }
         }
     }
-    TextAt(dl, F(400, 12.f), x, cy + 3.f + LM(12.f).asc, Hex(kMuted), Ellipsize(F(400, 12.f), line, textW).c_str());
-    cy += 24.f + kRowGap;
-    bool presence = telemetry::Enabled();
-    if (SwitchRow(dl, "about:presence", R{x, cy, iw, 18.f}, "Anonymous Presence", presence)) telemetry::SetEnabled(presence);
-    cy += 18.f + 6.f;
-    TextAt(dl, F(400, 11.5f), x, cy + LM(11.5f).asc, Hex(kMuted),
-           Ellipsize(F(400, 11.5f), "Sends an anonymous ping to the Citron server for telemetry purposes", iw).c_str());
-    cy += 16.f + 16.f;
+    TextMid(Face::Regular, 13.f, x, cy, Hex(tok::kLabel), Ellipsize(Face::Regular, 13.f, line, textW).c_str());
+    TextMid(Face::Regular, 12.5f, x, y + 61.f, Hex(tok::kMuted), "Free and open source under the GPL-3.0");
 
     float bx = x;
     for (const auto& [label, url] : {std::pair<const char*, const wchar_t*>{"Website", L"https://citron.lol"},
@@ -590,26 +619,220 @@ float App::DrawAboutCard(ImDrawList* dl, float x0, float y, float w) {
                                      {"Ko-fi", L"https://ko-fi.com/center2055"}}) {
         char id[32];
         std::snprintf(id, sizeof id, "about:%s", label);
-        const float bw = TextButtonWidth(label);
-        if (TextButton(dl, id, R{bx, cy, bw, 29.f}, label, false).clicked) Open(url);
-        bx += bw + 8.f;
+        const float bw = ButtonWidth(label);
+        if (Button(id, R{bx, y + 91.f - 14.f, bw, 28.f}, label, ButtonKind::Quiet).clicked) Open(url);
+        bx += bw + 6.f;
     }
-    return h;
 }
 
-float App::DrawSettings(ImDrawList* dl, float x0, float x1, float y, float colW, float dt) {
-    float left = DrawThemeCard(dl, x0, y, colW);
-    left += 12.f + DrawClientCard(dl, x0, y + left + 12.f, colW);
-    const float about = DrawAboutCard(dl, x1, y, colW);
-    const float configs = DrawConfigsCard(dl, x1, y + about + 12.f, colW, std::max(260.f, left - about - 12.f), dt);
-    return std::max(left, about + 12.f + configs);
+}  // namespace
+
+bool App::IsDragHandle(float x, float y) const {
+    if (x < 0.f || x >= kPanelW || y < 0.f || y >= kTopBarH) return false;
+    if (x < ps.tabsX0 - 6.f) return true;
+    return x > ps.tabsX1 + 4.f && x < ps.rightX0;
 }
 
-// The frame.
+void App::SelectTab(Cat c) { SetTab(s, c); }
+
+void App::Expand(const std::string& key) {
+    const std::string shown = key == "rightclicker" ? "clicker" : key;
+    const ModuleDef* d = s.Def(shown);
+    if (!d || d->cat == Cat::Settings) return;
+    SetTab(s, d->cat);
+    ps.selected[(int)d->cat] = shown;
+    ps.revealSelected = true;
+    if (key == "rightclicker") ps.clickerSide = 1;
+}
+
+void App::DrawConfigs(const R& card) {
+    float y = CardHead(card, "Configs");
+    // the header's right: the buttons, then the list has the whole card
+    float hx = card.x1() - kCardPad + 10.f;
+    auto headButton = [&](const char* id, const char* label) {
+        const float bw = ButtonWidth(label);
+        hx -= bw;
+        const bool clicked = Button(id, R{hx, card.y + 9.f, bw, 28.f}, label, ButtonKind::Ghost).clicked;
+        hx -= 2.f;
+        return clicked;
+    };
+    if (headButton("cfg:folder", "Open folder")) cfgio::OpenFolder();
+    if (headButton("cfg:export", "Export")) ExportConfig();
+    if (headButton("cfg:import", "Import")) ImportConfig();
+    if (headButton("cfg:new", "New config")) {
+        NewConfig();
+        ps.cfgScroll = ps.cfgTarget = 1e6f;
+        BeginEdit(EditKind::Rename, Id(s.activeConfig.c_str()), s.activeConfig);
+    }
+
+    // what the rows say about the other configs, read every so often
+    static std::map<std::string, cfgio::Info> infos;
+    static double infoAt = -10.0;
+    if (g_now - infoAt > 2.0) {
+        infoAt = g_now;
+        infos.clear();
+        for (const std::string& name : s.configs) infos[name] = cfgio::Peek(name);
+    }
+    int enabled = 0;
+    for (const ModuleDef& d : s.defs) enabled += d.cat != Cat::Settings && StateOn(s, d.key);
+
+    const R list{card.x + 8.f, y, card.w - 16.f, card.y1() - y - 10.f};
+    const int n = (int)s.configs.size();
+    const float content = (float)n * kCfgRowH;
+    const float maxScroll = std::max(0.f, content - list.h);
+    if (maxScroll > 0.f && WheelOver(list)) ps.cfgTarget -= ImGui::GetIO().MouseWheel * 70.f;
+    ps.cfgTarget = std::clamp(ps.cfgTarget, 0.f, maxScroll);
+    ps.cfgScroll = std::clamp(Approach(ps.cfgScroll, ps.cfgTarget), 0.f, maxScroll);
+    const ScrollBarState bar = ScrollBarBegin("cfg-bar", list, ps.cfgScroll, ps.cfgTarget, content);
+    PushClip(list);
+    std::string load, remove;
+    const float rowW = list.w - (bar.visible ? 12.f : 0.f);
+    for (int i = 0; i < n; ++i) {
+        const std::string name = s.configs[(size_t)i];
+        const R row{list.x, list.y + (float)i * kCfgRowH - ps.cfgScroll, rowW, kCfgRowH - 2.f};
+        if (row.y1() < list.y || row.y > list.y1()) continue;
+        const bool active = name == s.activeConfig, confirming = ps.confirmDelete == name;
+        const ImGuiID renameId = Id(name.c_str());
+        char id[96];
+        // the actions first, so they win the hover over the row
+        float ax = row.x1() - 8.f;
+        std::snprintf(id, sizeof id, "cfg:%s:x", name.c_str());
+        Hit hx2;
+        if (confirming) {
+            const float dw = ButtonWidth("Delete");
+            hx2 = Button(id, R{ax - dw, row.cy() - 14.f, dw, 28.f}, "Delete", ButtonKind::Danger);
+            ax -= dw + 2.f;
+        } else {
+            hx2 = IconButton(id, R{ax - 28.f, row.cy() - 14.f, 28.f, 28.f}, Icon::Trash, 15.f, true);
+            ax -= 30.f;
+        }
+        if (hx2.clicked) {
+            if (confirming) remove = name;
+            else ps.confirmDelete = name;
+        } else if (confirming && ImGui::IsMouseClicked(0) && !hx2.hovered) {
+            ps.confirmDelete.clear();
+        }
+        std::snprintf(id, sizeof id, "cfg:%s:pen", name.c_str());
+        if (IconButton(id, R{ax - 28.f, row.cy() - 14.f, 28.f, 28.f}, Icon::Pencil, 15.f).clicked) BeginEdit(EditKind::Rename, renameId, name);
+        ax -= 30.f;
+        std::string committed;
+        if (TakeCommit(EditKind::Rename, renameId, committed)) RenameConfig(name, committed);
+        const bool editing = EditingTarget(EditKind::Rename, renameId);
+        std::snprintf(id, sizeof id, "cfg:%s:row", name.c_str());
+        const Hit h = editing ? Hit{} : Item(id, row);
+        PointerOnHover(h);
+        if (h.clicked && !active) load = name;
+        if (h.hovered && ImGui::IsMouseDoubleClicked(0)) BeginEdit(EditKind::Rename, renameId, name);
+        if (active) Fill(row, White(0.045f), 8.f);
+        else if (h.hovered) Fill(row, White(0.025f), 8.f);
+        if (active) Circle(row.x + 16.f, row.cy(), 3.5f, AccentCol());
+        else Ring(row.x + 16.f, row.cy(), 3.f, White(0.22f), 1.3f);
+        if (editing) {
+            EditField(R{row.x + 28.f, row.y + 7.f, ax - row.x - 34.f, 30.f}, Face::Medium, 13.f, 10.f);
+            continue;
+        }
+        const float textW = ax - row.x - 36.f;
+        TextMid(Face::Medium, 13.f, row.x + 30.f, row.cy() - 7.5f, Hex(active ? tok::kText : tok::kLabel), Ellipsize(Face::Medium, 13.f, name, textW).c_str());
+        char meta[96];
+        if (active) std::snprintf(meta, sizeof meta, "in use, %d on, saves as you go", enabled);
+        else std::snprintf(meta, sizeof meta, "%d on, %s", infos[name].enabled, Ago(infos[name].savedAt).c_str());
+        TextMid(Face::Regular, 11.5f, row.x + 30.f, row.cy() + 8.5f, Hex(tok::kMuted), Ellipsize(Face::Regular, 11.5f, meta, textW).c_str());
+    }
+    PopClip();
+    ScrollBarEnd(bar);
+    if (!load.empty()) {
+        SaveActive();
+        LoadConfig(load);
+    }
+    if (!remove.empty()) {
+        ps.confirmDelete.clear();
+        DeleteConfig(remove);
+        infoAt = -10.0;
+    }
+}
+
+void App::DrawSettings(const R& page) {
+    const float colW = (page.w - kGap) * 0.5f, rightX = page.x + colW + kGap, lowY = page.y + kConfigsH + kGap;
+    DrawAppearance(s, R{page.x, page.y, colW, kAppearanceH});
+    DrawClient(s, R{page.x, page.y + kAppearanceH + kGap, colW, kClientH});
+    DrawSelfDestruct(s, R{page.x, lowY, colW, kLowerH});
+    DrawConfigs(R{rightX, page.y, colW, kConfigsH});
+    DrawAbout(R{rightX, lowY, colW, kLowerH});
+}
+
+// The game, once it has been found; nothing while Minecraft is not running. Returns where it starts.
+float App::DrawStatus(float x1, float cy) {
+    const BackendStatus st = backend.Status();
+    if (st.kind == BackendStatus::Kind::Searching) return x1;
+    std::string text;
+    bool problem = false;
+    if (st.kind == BackendStatus::Kind::Unsupported) {
+        text = "Unsupported version";
+        problem = true;
+    } else {
+        const size_t cut = st.version.rfind('.');
+        text = "Minecraft " + (cut != std::string::npos ? st.version.substr(0, cut) : st.version);
+        problem = st.kind == BackendStatus::Kind::Partial;
+    }
+    const float w = 26.f + TextW(Face::Medium, 12.f, text.c_str()) + 12.f;
+    const R pill{x1 - w, cy - 15.f, w, 30.f};
+    const Hit h = Item("status", pill);
+    Fill(pill, Hex(tok::kCard), 9.f);
+    Stroke(pill, problem ? Hex(tok::kAmber, 0.24f) : AccentCol(0.24f), 9.f, 1.f);
+    Circle(pill.x + 14.f, cy, 3.5f, problem ? Hex(tok::kAmber) : AccentCol());
+    TextMid(Face::Medium, 12.f, pill.x + 26.f, cy, Hex(tok::kLabel), text.c_str());
+    if (h.hovered && (!st.detail.empty() || st.kind == BackendStatus::Kind::Unsupported)) {
+        ps.tip = st.detail.empty() ? std::string("Citron Lite runs on 1.26.52 and 1.26.60") : st.detail;
+        ps.tipAnchor = pill;
+    }
+    return pill.x;
+}
+
+void App::DrawTopBar(const FrameInput& in, FrameOutput& out) {
+    const float cy = kTopBarH * 0.5f;
+    // the wordmark, its leaves carrying the accent, and a small tag on its baseline
+    const float h = 19.f;
+    const R mark{22.f, cy + 10.5f - h, h * in.logoAspect, h};
+    if (in.letters) DL()->AddImage(in.letters, Min(mark), Max(mark), ImVec2(0, 0), ImVec2(1, 1), Hex(tok::kText));
+    if (in.leaves) DL()->AddImage(in.leaves, Min(mark), Max(mark), ImVec2(0, 0), ImVec2(1, 1), AccentCol());
+    const R tag{mark.x1() + 6.f, mark.y1() - 14.f, TextW(Face::MonoMedium, 10.5f, "Lite") + 9.f, 14.f};
+    Fill(tag, AccentCol(0.16f), 4.f);
+    TextMidC(Face::MonoMedium, 10.5f, tag.cx(), tag.cy(), AccentCol(), "Lite");
+
+    float tx = tag.x1() + 22.f;
+    ps.tabsX0 = tx;
+    for (const CatInfo& c : kCats) {
+        const int count = c.cat == Cat::Settings ? 0 : ModuleCount(s, c.cat, 1);
+        char num[8], id[32];
+        std::snprintf(num, sizeof num, "%d", count);
+        std::snprintf(id, sizeof id, "tab:%s", c.key);
+        const float textW = TextW(Face::Medium, 13.f, c.label);
+        const float countW = count > 0 ? 6.f + TextW(Face::MonoMedium, 10.5f, num) : 0.f;
+        // the width springs when a count appears, so the tabs to the right glide over
+        const R b{tx, 12.f, Spring(Id(id, 3), 24.f + textW + countW, 30.f, 1.f), 32.f};
+        const Hit hit = Item(id, b);
+        PointerOnHover(hit);
+        if (hit.clicked) SetTab(s, c.cat);
+        const bool active = s.category == c.cat;
+        const float bg = Ease(Id(id, 1), active ? 1.f : (hit.hovered ? 0.45f : 0.f), 0.16f);
+        Fill(b, White(0.06f * bg), 8.f);
+        const float k = Ease(Id(id, 2), active ? 1.f : (hit.hovered ? 0.6f : 0.f), 0.16f);
+        TextMid(Face::Medium, 13.f, b.x + 12.f, b.cy(), Mix(Hex(tok::kMuted), Hex(tok::kText), k), c.label);
+        if (count > 0) TextMid(Face::MonoMedium, 10.5f, b.x + 12.f + textW + 6.f, b.cy(), AccentCol(active ? 1.f : 0.7f), num);
+        tx = b.x1() + 2.f;
+    }
+    ps.tabsX1 = tx;
+
+    const R close{kPanelW - 12.f - 32.f, 12.f, 32.f, 32.f}, mini{close.x - 2.f - 32.f, 12.f, 32.f, 32.f};
+    if (IconButton("close", close, Icon::Close, 15.f).clicked) out.wantClose = true;
+    if (IconButton("minimize", mini, Icon::Minimize, 15.f).clicked) out.wantMinimize = true;
+    const float rule = mini.x - 10.f, statusX = DrawStatus(rule - 10.f, cy);
+    if (statusX < rule - 10.f) Line(rule, cy - 8.f, rule, cy + 8.f, White(0.08f), 1.f);
+    ps.rightX0 = statusX - 8.f;
+}
+
 void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
-    BeginFrame(in.scale, in.fontScale, s.accent);
     ImGuiIO& io = ImGui::GetIO();
-    const float dt = std::clamp(io.DeltaTime, 0.f, 0.5f);
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -618,11 +841,13 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
+    BeginFrame(ImGui::GetWindowDrawList(), in.scale, in.fontScale, s.accent);
+    SetIconTexture(in.icons);
 
     // An open editor owns the keyboard; a bind being captured takes the next key or button. A left
     // click is never a bind: it cancels, and the key stays as it was.
     ProcessEditor(io);
+    bool pointerOk = true;
     if (!s.listening.empty() && !Editing()) {
         ModuleState* st = s.St(s.listening);
         std::string label = st ? st->key : std::string();
@@ -633,7 +858,7 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
                 label = kMouse[b];
                 done = true;
             }
-        if (done) g_interactive = false;
+        if (done) pointerOk = false;
         for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END && !done; ++k) {
             if (!ImGui::IsKeyPressed((ImGuiKey)k, false)) continue;
             if (k == ImGuiKey_Escape) {
@@ -653,52 +878,44 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
         }
     }
 
-    Fill(dl, R{0, 0, kPanelW, kPanelH}, Hex(kPanelBg), 0.f);
-    DrawHeader(dl, out, in.mark);
+    ps.wheelTaken = false;
+    ps.tip.clear();
+    const R panel{0.f, 0.f, kPanelW, kPanelH};
+    Fill(panel, Hex(tok::kPanel));
+    Stroke(panel, White(0.05f), kPanelRadius, 1.f);   // on the panel's own edge: the window ends there
 
-    const R area{0.f, kHeaderH + 1.f, kPanelW, kPanelH - kHeaderH - 1.f - 8.f};
-    const float maxPrev = std::max(0.f, contentHeight - area.h);
-    if (io.MouseWheel != 0.f) {
-        const float mx = io.MousePos.x / g_s, my = io.MousePos.y / g_s;
-        if (s.category == Cat::Settings && g_cfgList.contains(mx, my)) cfgScrollTarget -= io.MouseWheel * 100.f;
-        else if (area.contains(mx, my)) scrollTarget -= io.MouseWheel * 100.f;
-    }
-    scrollTarget = std::clamp(scrollTarget, 0.f, maxPrev);
-    scrollY = std::clamp(SmoothTo(scrollY, scrollTarget, dt), 0.f, maxPrev);
+    SetInteractive(pointerOk && !ps.pickerOpen);
+    DrawTopBar(in, out);
 
-    const float tabT = EaseCss((float)((g_now - tabSwitchAt) / 0.2));
-    g_alpha = tabT;
-    PushClip(area);
-    const float colW = (kPanelW - 36.f - 12.f) * 0.5f;
-    const float x0 = 18.f, x1 = x0 + colW + 12.f;
-    const float y = area.y + 18.f - scrollY + (1.f - tabT) * 10.f;
-    float total = 18.f;
-    if (s.category != Cat::Settings) {
-        g_cfgList = R{};
-        std::vector<const ModuleDef*> list;
-        for (const ModuleDef& d : s.defs)
-            if (d.cat == s.category && !d.hidden) list.push_back(&d);
-        // two columns, cards alternating between them, each stacking under the last in its column
-        float colY[2] = {y, y};
-        for (size_t i = 0; i < list.size(); ++i) {
-            const int c = (int)(i & 1);
-            ModuleState* st = s.St(list[i]->key);
-            if (!st) continue;
-            colY[c] += DrawCard(dl, *list[i], *st, c == 0 ? x0 : x1, colY[c], colW) + 12.f;
-        }
-        total += std::max(colY[0], colY[1]) - y - 12.f;
+    // After a tab change the content fades up; the list and the card's surface stay put.
+    const R body{kPad, kTopBarH, kPanelW - 2.f * kPad, kPanelH - kTopBarH - kPad};
+    const float t = EaseOutT((float)((g_now - ps.tabChangedAt) / 0.22));
+    if (s.category == Cat::Settings) {
+        PushAlpha(0.15f + 0.85f * t);
+        DrawSettings(R{body.x, body.y + (1.f - t) * 8.f, body.w, body.h});
+        PopAlpha();
     } else {
-        total += DrawSettings(dl, x0, x1, y, colW, dt);
+        DrawList(s, R{body.x, body.y, kListW, body.h}, t);
+        DrawDetail(s, R{body.x + kListW + kGap, body.y, body.w - kListW - kGap, body.h}, t);
     }
-    total += 18.f;
-    PopClip();
-    g_alpha = 1.f;
-    contentHeight = total;
-    ScrollBar(dl, "scroll", area.x1() - 11.f, area.y + 4.f, area.h - 8.f, area.h, total, scrollY, scrollTarget);
-    if (ImGui::IsMouseClicked(0) && !ImGui::IsAnyItemHovered() && IsDragHandle(io.MousePos.x / g_s, io.MousePos.y / g_s))
-        out.wantDrag = true;
+
+    SetInteractive(pointerOk);
+    if (ps.pickerOpen) {
+        if (s.category == Cat::Settings) DrawAccentPicker(s);
+        else ps.pickerOpen = false;
+    }
+    if (!ps.tip.empty()) {
+        const float tw = TextW(Face::Regular, 12.f, ps.tip.c_str()) + 20.f;
+        const R box{std::max(8.f, ps.tipAnchor.x1() - tw), ps.tipAnchor.y1() + 6.f, tw, 26.f};
+        Shadow(box, 7.f, 4.f, 12.f, 0.4f);
+        Fill(box, Hex(tok::kCardHover), 7.f);
+        Stroke(box, White(0.08f), 7.f, 1.f);
+        TextMid(Face::Regular, 12.f, box.x + 10.f, box.cy(), Hex(tok::kText), ps.tip.c_str());
+    }
+
+    if (ImGui::IsMouseClicked(0) && !ImGui::IsAnyItemHovered() && IsDragHandle(io.MousePos.x / g_s, io.MousePos.y / g_s)) out.wantDrag = true;
     EndFrameEditor();
-    ImGui::SetMouseCursor(g_cursor);
+    ImGui::SetMouseCursor(FrameCursor());
     ImGui::End();
     ImGui::PopStyleVar(2);
 }

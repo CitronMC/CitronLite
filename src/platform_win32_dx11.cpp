@@ -260,7 +260,7 @@ bool ActivateExistingInstance(unsigned waitMs) {
 }
 
 bool Init(Window& w, int width, int height, const wchar_t* title, float cornerRadius,
-          float initialScale) {
+          float initialScale, bool offscreen) {
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.style         = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc   = WndProc;
@@ -281,9 +281,10 @@ bool Init(Window& w, int width, int height, const wchar_t* title, float cornerRa
 
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     int x = (sw - w.width) / 2, y = (sh - w.height) / 2;
+    if (offscreen) x = y = -16000;
 
     w.hwnd = CreateWindowExW(
-        WS_EX_APPWINDOW | WS_EX_LAYERED, kClass, title,
+        (offscreen ? WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE : WS_EX_APPWINDOW) | WS_EX_LAYERED, kClass, title,
         WS_POPUP | WS_THICKFRAME, x, y, w.width, w.height,
         nullptr, nullptr, wc.hInstance, nullptr);
     if (!w.hwnd) return false;
@@ -321,7 +322,7 @@ bool Init(Window& w, int width, int height, const wchar_t* title, float cornerRa
 
     CreateRTV(w);
 
-    ShowWindow(w.hwnd, SW_SHOW);
+    ShowWindow(w.hwnd, offscreen ? SW_SHOWNOACTIVATE : SW_SHOW);
     UpdateWindow(w.hwnd);
     return true;
 }

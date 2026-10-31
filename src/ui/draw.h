@@ -1,7 +1,8 @@
-// The panel's drawing kit. Layout is in design pixels (the panel is 860 x 580) and every
-// coordinate is scaled once, when it reaches the draw list, so the numbers in the layout code
-// stay the numbers of the design. Nothing here is a stock ImGui widget: controls are invisible
-// buttons with their own drawing.
+// The panel's drawing kit, in the design language of the full client. Layout is in design pixels and
+// every coordinate is scaled once, when it reaches the draw list, so the numbers in the layout code
+// stay the numbers of the design. Controls are invisible buttons with their own drawing: ImGui gives
+// the hover to the first item under the pointer, so a control inside a clickable area is submitted
+// before its container.
 #pragma once
 #include "imgui.h"
 #include <string>
@@ -9,108 +10,150 @@
 
 namespace citron::ui {
 
-constexpr float kPanelW = 860.f, kPanelH = 580.f;
-constexpr float kSwitchW = 30.f, kSwitchH = 18.f;
+constexpr float kPanelW = 920.f, kPanelH = 600.f, kPanelRadius = 14.f;
 
-// colours
-constexpr unsigned kText = 0xe8eaf0, kMuted = 0x6a7080, kLabel = 0xb8bcc8, kBindText = 0x8a90a0;
-constexpr unsigned kPanelBg = 0x111318, kCardBg = 0x171a21, kDanger = 0xff6b7a, kWarn = 0xfbbf24, kKnobOff = 0x8a90a0;
-constexpr unsigned kDefaultAccent = 0xc8f135;
-extern const unsigned kSwatches[6];
+namespace tok {
+inline constexpr unsigned kPanel = 0x121411;     // the window
+inline constexpr unsigned kCard = 0x1a1c18;      // raised: the detail card, the selected row
+inline constexpr unsigned kCardHover = 0x1f221d;
+inline constexpr unsigned kWell = 0x0e0f0c;      // sunken: inputs, segmented tracks
+inline constexpr unsigned kText = 0xeceee6;      // names, values
+inline constexpr unsigned kLabel = 0xbcc1b3;     // setting labels
+inline constexpr unsigned kIdle = 0x9da394;      // names of modules that are off
+inline constexpr unsigned kSub = 0x8b9181;       // units, secondary numbers
+inline constexpr unsigned kMuted = 0x6c7264;     // descriptions, inactive tabs
+inline constexpr unsigned kFaint = 0x4a4f44;     // quiet numbers
+inline constexpr unsigned kLime = 0xc8f135;      // the accent
+inline constexpr unsigned kOnLime = 0x141905;    // what is drawn on the accent
+inline constexpr unsigned kAmber = 0xf2b544;     // attention without error
+inline constexpr unsigned kDanger = 0xff6b6b;
+}  // namespace tok
 
-extern unsigned g_accent;
-extern float g_alpha;
-extern float g_s, g_fk;
+extern const unsigned kSwatches[7];
+extern float g_s;
 extern double g_now;
-extern bool g_interactive;
-extern ImGuiMouseCursor g_cursor;
 
-ImU32 Hex(unsigned rgb, float a = 1.f);
-ImU32 White(float a);
-ImU32 Black(float a);
-ImU32 Mix(ImU32 a, ImU32 b, float t);
-ImU32 Brighten(ImU32 c, float k);
-ImU32 Accent(float a = 1.f);
-ImU32 OnAccent();
-bool LightAccent();
-unsigned HsvToRgb(float h, float s, float v);
-
-// fonts: Albert Sans 400/600/700 at the sizes the layout uses
-struct FontData { const void* data; int size; };
-void BuildFonts(ImFontAtlas* atlas, FontData regular, FontData semibold, FontData bold, float scale);
-ImFont* F(int weight, float size);
-struct LineM { float asc, desc, height; };
-LineM LM(float size);
+using Col = ImU32;
+Col Hex(unsigned rgb, float a = 1.f);
+Col White(float a);
+Col Black(float a);
+Col Mix(Col a, Col b, float t);
+Col AccentCol(float a = 1.f);
+Col OnAccentCol();
+void PushAlpha(float a);
+void PopAlpha();
 
 struct R {
     float x = 0, y = 0, w = 0, h = 0;
     float x1() const { return x + w; }
     float y1() const { return y + h; }
+    float cx() const { return x + w * 0.5f; }
+    float cy() const { return y + h * 0.5f; }
     bool contains(float px, float py) const { return px >= x && px < x1() && py >= y && py < y1(); }
+    R Inset(float d) const { return {x + d, y + d, w - 2.f * d, h - 2.f * d}; }
 };
-float Dv(float v);
 ImVec2 Min(const R& r);
 ImVec2 Max(const R& r);
-void Fill(ImDrawList* dl, const R& r, ImU32 col, float rounding = 0.f);
-void Stroke(ImDrawList* dl, const R& r, ImU32 col, float rounding, float thickness);
-void Circle(ImDrawList* dl, float cx, float cy, float r, ImU32 col);
-void Line(ImDrawList* dl, float x0, float y0, float x1, float y1, ImU32 col, float thickness);
+ImVec2 Mouse();                 // the pointer in design pixels
+ImDrawList* DL();
+
+void Fill(const R& r, Col c, float radius = 0.f);
+void Stroke(const R& r, Col c, float radius, float thickness);
+void Circle(float cx, float cy, float r, Col c);
+void Ring(float cx, float cy, float r, Col c, float thickness);
+void Line(float x0, float y0, float x1, float y1, Col c, float thickness);
+void Shadow(const R& r, float radius, float offY, float blur, float alpha);
 void PushClip(const R& r);
 void PopClip();
 
-float TextW(ImFont* f, const char* s, float spacing = 0.f);
-void TextAt(ImDrawList* dl, ImFont* f, float x, float baseline, ImU32 col, const char* s, float spacing = 0.f);
-void TextRight(ImDrawList* dl, ImFont* f, float x1, float baseline, ImU32 col, const char* s, float spacing = 0.f);
-void TextCenter(ImDrawList* dl, ImFont* f, float cx, float baseline, ImU32 col, const char* s, float spacing = 0.f);
-std::string Ellipsize(ImFont* f, const std::string& s, float maxW);
+// Hanken Grotesk for the interface, Schibsted Grotesk for titles, JetBrains Mono for numbers and keys.
+// Sizes are em sizes in design pixels.
+enum class Face { Regular, Medium, SemiBold, Title, TitleBold, MonoMedium, Count };
+struct FontFile { const void* data; int size; };
+void BuildFonts(ImFontAtlas* atlas, const FontFile (&files)[(int)Face::Count], float scale);
+float TextW(Face f, float size, const char* s, float tracking = 0.f);
+float CapH(Face f, float size);
+void Text(Face f, float size, float x, float baseline, Col c, const char* s, float tracking = 0.f);
+// Centred on the cap height at cy; the variants anchor the right edge or the middle.
+void TextMid(Face f, float size, float x, float cy, Col c, const char* s, float tracking = 0.f);
+void TextMidR(Face f, float size, float x1, float cy, Col c, const char* s, float tracking = 0.f);
+void TextMidC(Face f, float size, float cx, float cy, Col c, const char* s, float tracking = 0.f);
+std::string Ellipsize(Face f, float size, const std::string& s, float maxW);
 
-void ShadowRect(ImDrawList* dl, const R& r, float rounding, float offY, float blur, float alpha);
-float Animate(ImGuiID id, float target, float dur);
-float SmoothTo(float current, float target, float dt);
-float EaseCss(float t);
+float Dt();
+float Ease(ImGuiID id, float target, float dur);
+float Spring(ImGuiID id, float target, float omega = 26.f, float zeta = 0.78f);
+void SnapSpring(ImGuiID id, float value);
+float Approach(float current, float target, float rate = 14.f);
+float EaseOutT(float t);
+ImGuiID Id(const char* s, int n = 0);
 
-struct Hit { bool hovered = false, clicked = false, active = false, activated = false; ImGuiID id = 0; };
+struct Hit { bool hovered = false, clicked = false, held = false, activated = false; ImGuiID id = 0; };
 Hit Item(const char* id, const R& r);
-void Pointer(const Hit& h);
+void Cursor(ImGuiMouseCursor c);
+void PointerOnHover(const Hit& h);
+void SetInteractive(bool on);
+ImGuiMouseCursor FrameCursor();
+// With recording on, each item's rectangle is kept under its id for the frame after, so a session can
+// click a control by name. Note keeps one that is not an item, such as a card.
+void RecordItems(bool on);
+void Note(const char* id, const R& r);
+bool ItemRect(const std::string& id, R& out);
+std::vector<std::pair<std::string, R>> ItemRects();
 
-// The inline editor: config names, typed slider values and text fields share it.
+// The inline editor behind every text field.
 enum class EditKind { None, Rename, Value, Text };
 void BeginEdit(EditKind kind, ImGuiID target, const std::string& text);
 void EndEdit();
 bool Editing();
 bool EditingTarget(EditKind kind, ImGuiID target);
 void ProcessEditor(ImGuiIO& io);
-void EditFieldHit(const R& field);
-void DrawEditField(ImDrawList* dl, const R& field, ImFont* f, float pad);
+void EditField(const R& field, Face f, float size, float pad);
 bool TakeCommit(EditKind kind, ImGuiID target, std::string& text);
 void EndFrameEditor();
 
-// widgets
-void Knob(ImDrawList* dl, float cx, float cy, float rad, float blur, float alpha);
-void DrawSwitch(ImDrawList* dl, const R& r, bool on, const char* animKey);
-bool SwitchRow(ImDrawList* dl, const char* id, const R& r, const char* label, bool& on);
-float BindButtonWidth(const std::string& label);
-Hit BindButton(ImDrawList* dl, const char* id, const R& r, const std::string& label, bool capturing);
-Hit TextButton(ImDrawList* dl, const char* id, const R& r, const char* label, bool primary);
-float TextButtonWidth(const char* label);
-void ScrollBar(ImDrawList* dl, const char* id, float x, float y, float h, float view, float total, float& pos, float& target);
-std::string NumberText(float v, float step);
-void SliderUI(ImDrawList* dl, const char* id, const R& r, const char* label, float& v, float mn, float mx, float step,
-              const char* unit);
-void RangeUI(ImDrawList* dl, const char* id, const R& r, const char* label, float& lo, float& hi, float mn, float mx,
-             float step, const char* unit);
-void SegmentedUI(ImDrawList* dl, const char* prefix, float x1, float y, const std::vector<std::string>& options, int& selected);
+bool Switch(const char* id, const R& r, bool& on);
+bool Checkbox(const char* id, float x, float cy, float maxW, const char* label, bool& on);
+// One line: label, track, value. `labelW` is the label's column; click the number to type one.
+bool Slider(const char* id, const R& row, const char* label, float labelW, float& v, float mn, float mx, float step, const char* unit);
+bool RangeSlider(const char* id, const R& row, const char* label, float labelW, float& lo, float& hi, float mn, float mx, float step,
+                 const char* unit);
+// `dots` marks options with a small light, one flag an option.
+bool Segmented(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel, const bool* dots = nullptr);
 float SegmentedWidth(const std::vector<std::string>& options);
-void StepperUI(ImDrawList* dl, const char* prefix, float x1, float y, const std::vector<std::string>& options, int& selected);
-bool TextField(ImDrawList* dl, const char* id, const R& field, const std::string& text, const char* placeholder,
-               std::string& out);
-void DrawCross(ImDrawList* dl, float cx, float cy, float half, ImU32 col, float thickness);
-void DrawPencil(ImDrawList* dl, float cx, float cy, ImU32 col);
-void DrawChevron(ImDrawList* dl, float cx, float cy, float half, bool right, ImU32 col);
-void SelectionRing(ImDrawList* dl, float cx, float cy, float rad, unsigned bg);
-void DrawHueWheel(ImDrawList* dl, float cx, float cy, float rad);
+bool ChoiceStepper(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel);
+float KeyCapWidth(const char* label, float size = 10.5f);
+void KeyCap(float x, float cy, const char* label, bool lit = false, float size = 10.5f);
+// A keycap when bound, "Bind" when not, "Press a key" while capturing.
+Hit BindButton(const char* id, float x1, float cy, const std::string& bind, bool capturing);
+float BindButtonWidth(const std::string& bind, bool capturing);
+enum class ButtonKind { Primary, Quiet, Ghost, Danger };
+Hit Button(const char* id, const R& r, const char* label, ButtonKind kind);
+float ButtonWidth(const char* label);
+enum class Icon { Close, Minimize, Keyboard, Check, ChevronLeft, ChevronRight, Pencil, Trash };
+void DrawIcon(Icon i, float cx, float cy, float size, Col c);
+void SetIconTexture(ImTextureID tex);
+Hit IconButton(const char* id, const R& r, Icon icon, float iconSize = 14.f, bool danger = false);
+// A field that keeps nothing: true once with what was typed, on Enter or a click elsewhere.
+bool TextField(const char* id, const R& field, const std::string& text, const char* placeholder, std::string& out);
 
-// Every frame, before anything is drawn: the scale, the clock, the accent.
-void BeginFrame(float scale, float fontScale, unsigned accent);
+// A scrollbar at the right edge of `area` whose thumb can be dragged. Hidden when the content fits.
+// Begin before drawing the content, End after it.
+struct ScrollBarState {
+    bool visible = false, hot = false, held = false;
+    R area;
+    float thumbY = 0.f, thumbH = 0.f;
+    const char* id = "";
+};
+ScrollBarState ScrollBarBegin(const char* id, const R& area, float& scroll, float& target, float content);
+void ScrollBarEnd(const ScrollBarState& s);
+
+bool Swatches(const char* id, float x1, float cy, const unsigned* colours, int n, unsigned& value, float d = 15.f);
+void HueRing(float cx, float cy, float r);
+float PickerHeight();
+bool ColourPicker(const char* id, float x, float y, float w, unsigned& rgb);
+
+// Every frame, before anything is drawn.
+void BeginFrame(ImDrawList* dl, float scale, float fontScale, unsigned accent);
 
 }  // namespace citron::ui

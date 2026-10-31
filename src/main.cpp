@@ -138,9 +138,15 @@ void SaveBackbufferBMP(platform::Window& win, const char* path) {
 float g_fontScale = 0.f;
 
 void BuildFonts(float scale) {
-    ui::BuildFonts(ImGui::GetIO().Fonts, {fontdata::kAlbertSansRegular, (int)sizeof fontdata::kAlbertSansRegular},
-                   {fontdata::kAlbertSansSemiBold, (int)sizeof fontdata::kAlbertSansSemiBold},
-                   {fontdata::kAlbertSansBold, (int)sizeof fontdata::kAlbertSansBold}, scale);
+    const ui::FontFile files[(int)ui::Face::Count] = {
+        {fontdata::kHankenRegular, (int)sizeof fontdata::kHankenRegular},
+        {fontdata::kHankenMedium, (int)sizeof fontdata::kHankenMedium},
+        {fontdata::kHankenSemiBold, (int)sizeof fontdata::kHankenSemiBold},
+        {fontdata::kSchibstedSemiBold, (int)sizeof fontdata::kSchibstedSemiBold},
+        {fontdata::kSchibstedBold, (int)sizeof fontdata::kSchibstedBold},
+        {fontdata::kMonoMedium, (int)sizeof fontdata::kMonoMedium},
+    };
+    ui::BuildFonts(ImGui::GetIO().Fonts, files, scale);
     g_fontScale = scale;
 }
 
@@ -164,12 +170,15 @@ void RenderOnce(platform::Window& w, App& app, bool foreground, const std::strin
     FrameInput in;
     in.scale = w.scale > 0.f ? w.scale : 1.f;
     in.fontScale = g_fontScale;
-    in.mark = LogoTex();
+    in.letters = LogoLetters();
+    in.leaves = LogoLeaves();
+    in.logoAspect = LogoAspect();
+    in.icons = IconAtlas();
     in.foreground = foreground;
     FrameOutput out;
     app.Frame(in, out);
     ImGui::Render();
-    const float clear[4] = {0x11 / 255.f, 0x13 / 255.f, 0x18 / 255.f, 1.f};
+    const float clear[4] = {0x12 / 255.f, 0x14 / 255.f, 0x11 / 255.f, 1.f};
     platform::BeginRender(w, clear);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     if (!capture.empty()) SaveBackbufferBMP(w, capture.c_str());
@@ -214,7 +223,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     else if (const char* s = Arg("--shotscale=")) scale = std::max(0.5f, (float)std::atof(s));
 
     platform::Window win;
-    if (!platform::Init(win, (int)ui::kPanelW, (int)ui::kPanelH, L"Citron Lite", 12.f, scale)) return 1;
+    if (!platform::Init(win, (int)ui::kPanelW, (int)ui::kPanelH, L"Citron Lite", ui::kPanelRadius, scale, shot)) return 1;
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -256,7 +265,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     int frame = 0;
     UiScript script;
     const bool scripted = shot && script.Load(ArgWord("--script="));
-    if (scripted) SetWindowPos(win.hwnd, nullptr, -16000, -16000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    if (scripted) ui::RecordItems(true);
 
     bool restarted = false;
     ULONGLONG nextRestartCheck = 0;
@@ -290,7 +299,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         if (last) break;
     }
 
-    if (const std::string dump = ArgWord("--dump="); !dump.empty()) app.SaveTo(dump);
+    if (const std::string dump = ArgWord("--dump="); !dump.empty()) {
+        app.SaveTo(dump);
+        if (FILE* f = std::fopen((dump + ".missing").c_str(), "wb")) {
+            for (const std::string& id : script.Missing()) std::fprintf(f, "%s\n", id.c_str());
+            std::fclose(f);
+        }
+    }
     app.Shutdown();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

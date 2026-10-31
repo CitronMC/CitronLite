@@ -9,10 +9,15 @@
 
 namespace citron {
 
+namespace ui { struct R; }
+
 struct FrameInput {
-    float scale = 1.f;        // device pixels per design pixel
-    float fontScale = 1.f;    // the scale the font atlas was built for
-    ImTextureID mark = 0;
+    float scale = 1.f;            // device pixels per design pixel
+    float fontScale = 1.f;        // the scale the font atlas was built for
+    ImTextureID letters = 0;      // the wordmark's two masks, tinted when drawn
+    ImTextureID leaves = 0;
+    float logoAspect = 3.f;       // width / height
+    ImTextureID icons = 0;
     bool foreground = true;
 };
 
@@ -33,7 +38,7 @@ public:
 
     // headless captures
     void SelectTab(Cat c);
-    void Expand(const std::string& key);
+    void Expand(const std::string& key);                             // opens this module
     void Preview(const std::string& key, const std::string& bind);   // on, with this bind
     void SaveTo(const std::string& path) const;
 
@@ -65,26 +70,11 @@ private:
     void ApplyFriendEdits();
 
     // the panel (panel.cpp)
-    float scrollY = 0.f, scrollTarget = 0.f, contentHeight = 0.f;
-    float cfgScroll = 0.f, cfgScrollTarget = 0.f;
-    double tabSwitchAt = -10.0;
-    bool pickerOpen = false;
-    float pickerH = 0.f, pickerS = 0.f, pickerV = 0.f;
-    std::string renaming;
-    std::string confirmDelete;
-    float tabsEnd = 0.f, controlsX = 0.f;
     void DrawPanel(const FrameInput& in, FrameOutput& out);
-    void DrawHeader(ImDrawList* dl, FrameOutput& out, ImTextureID mark);
-    float DrawCard(ImDrawList* dl, const ModuleDef& d, ModuleState& st, float x, float y, float w);
-    float CardBodyHeight(const ModuleDef& d, const ModuleState& st) const;
-    void DrawCardBody(ImDrawList* dl, const ModuleDef& d, ModuleState& st, float x, float y, float w);
-    float DrawFriends(ImDrawList* dl, ModuleState& st, float x, float y, float w);
-    float DrawSettings(ImDrawList* dl, float x0, float x1, float y, float colW, float dt);
-    float DrawClientCard(ImDrawList* dl, float x, float y, float w);
-    float DrawThemeCard(ImDrawList* dl, float x, float y, float w);
-    float DrawConfigsCard(ImDrawList* dl, float x, float y, float w, float maxH, float dt);
-    float DrawAboutCard(ImDrawList* dl, float x, float y, float w);
-    void SyncPicker();
+    void DrawTopBar(const FrameInput& in, FrameOutput& out);
+    float DrawStatus(float x1, float cy);
+    void DrawSettings(const ui::R& page);
+    void DrawConfigs(const ui::R& card);
 };
 
 }  // namespace citron

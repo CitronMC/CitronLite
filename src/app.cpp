@@ -64,8 +64,6 @@ void App::SetHwnd(void* h) {
     backend.SetHwnd(h);
 }
 
-void App::SelectTab(Cat c) { s.category = c; }
-void App::Expand(const std::string& key) { s.expanded = key; }
 void App::Preview(const std::string& key, const std::string& bind) {
     if (ModuleState* st = s.St(key)) {
         st->on = true;
@@ -111,7 +109,6 @@ bool App::LoadConfig(const std::string& name) {
     s.activeConfig = name;
     autosaveBaseline = autosaveSeen = cfgio::Serialize(s.mods, s.accent);
     autosaveDirtySince = 0;
-    SyncPicker();
     RememberActive();
     return true;
 }
@@ -162,7 +159,6 @@ void App::NewConfig() {
     s.activeConfig = name;
     SaveActive();
     RememberActive();
-    renaming = name;
 }
 
 bool App::RenameConfig(const std::string& from, const std::string& to) {

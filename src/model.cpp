@@ -73,12 +73,14 @@ void BuildModel(AppState& s) {
     const char* deg = "\xC2\xB0";
     const std::vector<std::string> teams = {"Auto", "Red", "Blue", "Green", "Yellow", "Aqua", "Pink",
                                             "Purple", "Orange", "White", "Gray", "Black", "Gold"};
+    const char* group = "";
     auto def = [&](const char* key, const char* name, const char* desc, Cat cat) -> ModuleDef& {
         ModuleDef d;
         d.key = key;
         d.name = name;
         d.desc = desc;
         d.cat = cat;
+        d.group = group;
         s.defs.push_back(std::move(d));
         return s.defs.back();
     };
@@ -86,6 +88,7 @@ void BuildModel(AppState& s) {
     s.defs.reserve(40);
 
     // Combat
+    group = "Aim";
     def("aimassist", "Aim Assist", "Eases your aim onto the player nearest your crosshair", Cat::Combat)
         .Slider("strength", "Strength", 10, 100, 1, "%", 55)
         .Slider("smoothing", "Smoothing", 0, 100, 1, "%", 40)
@@ -102,6 +105,7 @@ void BuildModel(AppState& s) {
         .Range("delay", "Reaction Delay", 0, 300, 5, " ms", 0, 0)
         .Check("playersOnly", "Players Only", true)
         .Check("onlyWeapon", "Only With A Weapon", false);
+    group = "Hits";
     def("reach", "Reach", "Extends how far your hits go", Cat::Combat)
         .Range("distance", "Distance", 3, 6, 0.01f, " blocks", 4.5f, 6.0f)
         .Slider("chance", "Chance", 0, 100, 1, "%", 100);
@@ -110,14 +114,17 @@ void BuildModel(AppState& s) {
         .Slider("height", "Height", 0, 1, 0.01f, " blocks", 0.3f)
         .Check("shadow", "Shadow Spoof", true);
     def("ghosthand", "Ghost Hand", "Hits players through blocks", Cat::Combat);
+    group = "Clicks";
     def("clicker", "Auto Clicker", "Clicks for you while you hold attack", Cat::Combat)
         .Range("cps", "CPS", 1, 20, 0.5f, "", 10, 14)
         .Slider("jitter", "Jitter", 0, 20, 0.5f, " px", 3)
         .Check("breakBlock", "Break Blocks", true)
         .Check("avoidMenus", "Avoid Menus", true);
     def("rightclicker", "Right Clicker", "Clicks for you while you hold use", Cat::Combat)
+        .Hidden()
         .Range("cps", "CPS", 1, 20, 0.5f, "", 8, 12)
         .Slider("jitter", "Jitter", 0, 20, 0.5f, " px", 0);
+    group = "Targets";
     def("teams", "Teams", "Leaves players on your team alone", Cat::Combat)
         .Choice("color", "Team Color", teams);
     def("friends", "Friends", "Leaves the players on your list alone", Cat::Combat)
@@ -125,6 +132,7 @@ void BuildModel(AppState& s) {
         .Check("middleClick", "Middle Click Adds", true);
 
     // Movement
+    group = "Knockback";
     def("velocity", "Velocity", "Scales the knockback you take", Cat::Movement)
         .Range("horizontal", "Horizontal", 0, 200, 1, "%", 50, 70)
         .Range("vertical", "Vertical", 0, 200, 1, "%", 70, 90)
@@ -140,10 +148,12 @@ void BuildModel(AppState& s) {
         .Range("range", "Hit Distance", 0, 6, 0.1f, " blocks", 0, 3)
         .Slider("chance", "Chance", 0, 100, 1, "%", 100)
         .Check("sprintOnly", "Only When Sprinting", false);
+    group = "Keys";
     def("snaptap", "SnapTap", "The newest movement key wins", Cat::Movement)
         .Choice("keys", "Keys", {"Both", "Forward & Back", "Left & Right"});
     def("autosprint", "Auto Sprint", "Keeps you sprinting", Cat::Movement)
         .Check("strafe", "Sprint While Strafing", true);
+    group = "Air";
     def("nojumpdelay", "No Jump Delay", "Removes the wait between jumps", Cat::Movement);
     def("airaccel", "Air Accel", "Changes how fast you speed up in the air", Cat::Movement)
         .Slider("multiplier", "Speed", 10, 400, 5, "%", 100);
@@ -151,18 +161,22 @@ void BuildModel(AppState& s) {
         .Range("speed", "Fall Speed", 0, 3.92f, 0.001f, " blocks", 1.4f, 1.6f)
         .Range("timer", "Timer Speed", 1, 5, 0.001f, "x", 1, 1)
         .Check("afterJump", "After Jumps", false);
+    group = "Speed";
     def("timer", "Timer", "Changes how fast the game ticks", Cat::Movement)
         .Slider("ticks", "Speed", 1, 40, 0.001f, " ticks", 20);
 
     // Items
+    group = "Throw";
     def("keybindpearl", "Keybind Pearl", "Throws a pearl from your hotbar on its key", Cat::Items).Bind(BindKind::Fire);
     def("keybindsnowball", "Keybind Snowball", "Throws a snowball from your hotbar on its key", Cat::Items)
         .Bind(BindKind::Fire)
         .Check("eggs", "Eggs Too", false);
     def("keybindpot", "Keybind Pot", "Throws a healing potion from your hotbar on its key", Cat::Items).Bind(BindKind::Fire);
+    group = "Use";
     def("nousedelay", "No Use Delay", "Uses items right after a hit", Cat::Items);
 
     // Visuals
+    group = "View";
     def("zoom", "Zoom", "Zooms in while you hold its key", Cat::Visuals)
         .Bind(BindKind::Hold)
         .Slider("fov", "Zoom FOV", 5, 110, 1, deg, 30)
@@ -172,7 +186,9 @@ void BuildModel(AppState& s) {
         .Check("invertScroll", "Invert Scroll", false);
     def("customfov", "Custom FOV", "Sets your field of view past the game's limits", Cat::Visuals)
         .Slider("fov", "Field Of View", 10, 170, 1, deg, 120);
+    group = "World";
     def("fullbright", "Fullbright", "Lights up the whole world", Cat::Visuals);
+    group = "Players";
     def("tpnametags", "Third Person Nametags", "Shows your own nametag in third person", Cat::Visuals);
 
     // Settings

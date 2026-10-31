@@ -217,6 +217,22 @@ bool Read(const std::string& path, std::map<std::string, ModuleState>& mods, uns
 
 void Delete(const std::string& name) { DeleteFileA(PathFor(name).c_str()); }
 
+Info Peek(const std::string& name) {
+    Info info;
+    const std::string path = PathFor(name);
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    if (GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fa)) {
+        const unsigned long long t = (unsigned long long)fa.ftLastWriteTime.dwHighDateTime << 32 | fa.ftLastWriteTime.dwLowDateTime;
+        info.savedAt = (long long)(t / 10000000ULL) - 11644473600LL;
+    }
+    if (FILE* f = std::fopen(path.c_str(), "rb")) {
+        char line[256];
+        while (std::fgets(line, sizeof line, f)) info.enabled += std::strncmp(line, "on 1", 4) == 0;
+        std::fclose(f);
+    }
+    return info;
+}
+
 std::string SaveDialog(const std::string& defaultName) {
     char file[MAX_PATH] = {};
     std::strncpy(file, defaultName.c_str(), MAX_PATH - 1);
