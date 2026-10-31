@@ -17,6 +17,25 @@ std::atomic<int> g_notches{0};
 
 std::atomic<bool> g_forwardHeldBack{false};
 
+std::atomic<bool> g_keysTaken{false};
+std::atomic<uint32_t> g_pressCount{0};
+std::atomic<int> g_pressVk{0};
+
+// A bind on Shift, Ctrl or Alt names the key whichever side it is on; the hook is told the side.
+int EitherSide(int vk) {
+    switch (vk) {
+    case VK_LSHIFT: case VK_RSHIFT: return VK_SHIFT;
+    case VK_LCONTROL: case VK_RCONTROL: return VK_CONTROL;
+    case VK_LMENU: case VK_RMENU: return VK_MENU;
+    default: return 0;
+    }
+}
+
+void NotePress(int vk) {
+    g_pressVk.store(vk, std::memory_order_relaxed);
+    g_pressCount.fetch_add(1u, std::memory_order_release);
+}
+
 // SnapTap. Only the hook thread touches the pairs.
 std::atomic<int> g_snapMode{0};
 struct Pair {
@@ -98,6 +117,7 @@ LRESULT CALLBACK MouseProc(int code, WPARAM wparam, LPARAM lparam) {
             if (down && !was) {
                 g_edges[vk].fetch_add(1u, std::memory_order_relaxed);
                 if (MouseCode(vk) == g_attackCode.load(std::memory_order_relaxed)) g_attacks.fetch_add(1u);
+                NotePress(vk);
             }
         }
         if (wparam == WM_MOUSEWHEEL && g_wheelOwned.load(std::memory_order_acquire)) {
@@ -125,7 +145,18 @@ LRESULT CALLBACK KeyboardProc(int code, WPARAM wparam, LPARAM lparam) {
             if (down && !was) {
                 g_edges[vk].fetch_add(1u, std::memory_order_relaxed);
                 if (vk == g_attackCode.load(std::memory_order_relaxed)) g_attacks.fetch_add(1u);
+                NotePress(vk);
             }
+            if (const int either = EitherSide(vk)) {
+                const bool other = g_key[either].exchange(down, std::memory_order_relaxed);
+                if (down && !other) g_edges[either].fetch_add(1u, std::memory_order_relaxed);
+            }
+            // The Click GUI has the keyboard: a press stops here and never lands in the chat box behind
+            // it. A release goes on, so nothing the game saw go down stays down. Alt and the Windows
+            // key still reach the system.
+            if (down && g_keysTaken.load(std::memory_order_acquire) && vk != VK_LWIN && vk != VK_RWIN &&
+                vk != VK_LMENU && vk != VK_RMENU && !(ks->flags & LLKHF_ALTDOWN))
+                return 1;
             if (repeat && vk == g_forward.load(std::memory_order_relaxed) &&
                 g_forwardHeldBack.load(std::memory_order_relaxed))
                 return 1;
@@ -164,6 +195,10 @@ void SetHookBindings(const gamebind::Bindings& b) {
     g_left.store(b.left, std::memory_order_relaxed);
     g_right.store(b.right, std::memory_order_relaxed);
 }
+
+void SetKeysTaken(bool on) { g_keysTaken.store(on, std::memory_order_release); }
+uint32_t KeyPressCount() { return g_pressCount.load(std::memory_order_acquire); }
+int LastKeyPress() { return g_pressVk.load(std::memory_order_relaxed); }
 
 uint32_t AttackPresses() { return g_attacks.load(std::memory_order_acquire); }
 void CountAttack() { g_attacks.fetch_add(1u); }

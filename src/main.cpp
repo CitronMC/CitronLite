@@ -3,6 +3,7 @@
 #include "citron/font_data.h"
 #include "citron/log.h"
 #include "citron/logo.h"
+#include "citron/overlay.h"
 #include "citron/platform.h"
 #include "citron/ui_script.h"
 #include "citron/updater.h"
@@ -188,6 +189,16 @@ void RenderOnce(platform::Window& w, App& app, bool foreground, const std::strin
     if (out.wantDrag) platform::BeginDrag(w);
 }
 
+void RenderOverlay(App& app) {
+    overlay::BeginFrame();
+    FrameInput in;
+    in.scale = overlay::Scale();
+    in.fontScale = g_fontScale;
+    in.icons = IconAtlas();
+    app.OverlayFrame(in);
+    overlay::EndFrame();
+}
+
 void RenderDuringResize(platform::Window& w, void* ctx) {
     auto* l = static_cast<Loop*>(ctx);
     RenderOnce(w, *l->app, true);
@@ -223,7 +234,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     else if (const char* s = Arg("--shotscale=")) scale = std::max(0.5f, (float)std::atof(s));
 
     platform::Window win;
-    if (!platform::Init(win, (int)ui::kPanelW, (int)ui::kPanelH, L"Citron Lite", ui::kPanelRadius, scale, shot)) return 1;
+    const bool previewGui = shot && Arg("--gui") != nullptr;
+    if (!platform::Init(win, previewGui ? 1280 : (int)ui::kPanelW, previewGui ? 800 : (int)ui::kPanelH, L"Citron Lite", ui::kPanelRadius, scale, shot)) return 1;
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -238,9 +250,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     ImGui_ImplDX11_Init(win.device, win.context);
     LoadLogo(win.device, win.context);
 
+    const bool overlayReady = !shot && overlay::Init(win.device, win.context, io.Fonts);
+
     App app;
     app.Init(shot);
     app.SetHwnd(win.hwnd);
+    if (previewGui) app.PreviewGui();
     Loop loop{&win, &app};
     win.frameCtx = &loop;
     win.onFrame = RenderDuringResize;
@@ -268,7 +283,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (scripted) ui::RecordItems(true);
 
     bool restarted = false;
-    ULONGLONG nextRestartCheck = 0;
+    ULONGLONG nextRestartCheck = 0, nextPanelFrame = 0;
     while (platform::Pump(win)) {
         // An installed update restarts by itself, but never while you are in the game.
         if (!shot && !restarted && updater::Enabled() && GetTickCount64() >= nextRestartCheck) {
@@ -278,12 +293,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
                 if (updater::RestartToApply()) PostQuitMessage(0);
             }
         }
+        app.Tick();
+        if (overlayReady) {
+            overlay::SetCaptureHidden(app.StreamHidden());
+            overlay::Sync(app.OverlayWanted() ? (HWND)app.GameWindow() : nullptr, app.OverlayInteractive());
+        }
+        const bool overlayOn = overlayReady && overlay::Visible();
         const bool minimized = IsIconic(win.hwnd) != FALSE;
         const bool background = !shot && GetForegroundWindow() != win.hwnd;
         // Behind the game this window costs the game input latency: it draws a few times a second
-        // and never waits on the compositor.
-        if (minimized) Sleep(60);
-        else if (background) Sleep(40);
+        // and never waits on the compositor. With the overlay up the overlay sets the pace.
+        if (!overlayOn) {
+            if (minimized) Sleep(60);
+            else if (background) Sleep(40);
+        }
         win.vsyncFlush = !background && !scripted;
 
         if (!win.inSizeMove && std::fabs(win.scale - g_fontScale) > 0.02f) {
@@ -291,12 +314,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             ImGui_ImplDX11_InvalidateDeviceObjects();
             ImGui_ImplDX11_CreateDeviceObjects();
         }
-        if (minimized) continue;
-        std::string capture;
-        if (scripted && !script.Step(win, capture)) break;
-        const bool last = shot && !scripted && ++frame == shotFrame;
-        RenderOnce(win, app, !background, last ? shotPath : capture);
-        if (last) break;
+        const ULONGLONG now = GetTickCount64();
+        if (!minimized && (!overlayOn || !background || now >= nextPanelFrame)) {
+            nextPanelFrame = now + 40;
+            std::string capture;
+            if (scripted && !script.Step(win, capture)) break;
+            const bool last = shot && !scripted && ++frame == shotFrame;
+            RenderOnce(win, app, !background, last ? shotPath : capture);
+            if (last) break;
+        }
+        if (overlayOn) RenderOverlay(app);
     }
 
     if (const std::string dump = ArgWord("--dump="); !dump.empty()) {
@@ -307,6 +334,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         }
     }
     app.Shutdown();
+    if (overlayReady) overlay::Shutdown();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

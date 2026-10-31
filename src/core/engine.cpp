@@ -278,32 +278,36 @@ void* AllocCaveNear(const Proc& p, uintptr_t nearAddr, size_t size) {
     return nullptr;
 }
 
-bool InstallCaptureRegHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, uint8_t modrm, uint8_t rex) {
+namespace {
+
+constexpr size_t kCaveBytes = 0x108;
+constexpr int kSlotOffset = 0x100;
+
+// A cave: `head`, then the stolen instructions and the jump back. The slot is at a fixed distance from
+// the cave's start, so `head` can reach it by rip-relative displacement before the cave has an address.
+// `slotInit`, if any, is in place before the jump in is.
+bool PlaceCave(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, const uint8_t* head, int headN,
+               const void* slotInit, size_t slotN) {
     if (!p.h || stolenN < 5 || stolenN > 16) return false;
 
     uint8_t orig[16] = {};
     if (!Read(p, match, orig, stolenN)) return false;
 
-    const size_t CAVE = 0x108;
-    void* cave = AllocCaveNear(p, match, CAVE);
+    void* cave = AllocCaveNear(p, match, kCaveBytes);
     if (!cave) { Log("[cave] AllocCaveNear failed near 0x%llX", (unsigned long long)match); return false; }
-    uintptr_t caveA = (uintptr_t)cave;
-    uintptr_t slot  = caveA + 0x100;
+    const uintptr_t caveA = (uintptr_t)cave;
 
-    uint8_t buf[0x108] = {};
-    int n = 0;
-    // mov [rip+disp], reg
-    buf[n++] = rex; buf[n++] = 0x89; buf[n++] = modrm;
-    int32_t disp = (int32_t)(slot - (caveA + 7));
-    std::memcpy(buf + n, &disp, 4); n += 4;
-    // the stolen instructions, then back
+    uint8_t buf[kCaveBytes] = {};
+    int n = headN;
+    std::memcpy(buf, head, headN);
     std::memcpy(buf + n, orig, stolenN); n += stolenN;
     buf[n++] = 0xE9;
-    int32_t relBack = (int32_t)((match + stolenN) - (caveA + n + 4));
-    std::memcpy(buf + n, &relBack, 4); n += 4;
+    const int32_t relBack = (int32_t)((match + stolenN) - (caveA + n + 4));
+    std::memcpy(buf + n, &relBack, 4);
+    if (slotInit) std::memcpy(buf + kSlotOffset, slotInit, slotN);
 
     SIZE_T put = 0;
-    if (!WriteProcessMemory(p.h, cave, buf, CAVE, &put) || put != CAVE) {
+    if (!WriteProcessMemory(p.h, cave, buf, kCaveBytes, &put) || put != kCaveBytes) {
         VirtualFreeEx(p.h, cave, 0, MEM_RELEASE);
         Log("[cave] write cave body failed"); return false;
     }
@@ -311,76 +315,64 @@ bool InstallCaptureRegHook(const Proc& p, CaveHook& h, uintptr_t match, int stol
     // the jump in, padded with NOPs to the stolen length
     uint8_t tramp[16]; std::memset(tramp, 0x90, sizeof(tramp));
     tramp[0] = 0xE9;
-    int32_t relFwd = (int32_t)(caveA - (match + 5));
+    const int32_t relFwd = (int32_t)(caveA - (match + 5));
     std::memcpy(tramp + 1, &relFwd, 4);
     if (!WriteProtected(p, match, tramp, stolenN)) {
         VirtualFreeEx(p.h, cave, 0, MEM_RELEASE);
         Log("[cave] write trampoline failed"); return false;
     }
 
-    h.match = match; h.cave = caveA; h.slot = slot; h.stolen = stolenN;
+    h.match = match; h.cave = caveA; h.slot = caveA + kSlotOffset; h.stolen = stolenN;
     std::memcpy(h.orig, orig, stolenN); h.installed = true;
     // The stolen bytes are logged: a length that splits an instruction shows up here at once.
-    {
-        char hex[3 * 16 + 1]; int at = 0;
-        for (int i = 0; i < stolenN && i < 16; ++i)
-            at += std::snprintf(hex + at, sizeof(hex) - at, "%02X ", orig[i]);
-        Log("[cave] installed @ 0x%llX -> cave 0x%llX slot 0x%llX (stole %d: %s)",
-            (unsigned long long)match, (unsigned long long)caveA,
-            (unsigned long long)slot, stolenN, hex);
-    }
+    char hex[3 * 16 + 1]; int at = 0;
+    for (int i = 0; i < stolenN && i < 16; ++i)
+        at += std::snprintf(hex + at, sizeof(hex) - at, "%02X ", orig[i]);
+    Log("[cave] installed @ 0x%llX -> cave 0x%llX slot 0x%llX (stole %d: %s)", (unsigned long long)match,
+        (unsigned long long)caveA, (unsigned long long)h.slot, stolenN, hex);
     return true;
 }
 
-bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN,
-                          float initial) {
-    if (!p.h || stolenN < 5 || stolenN > 16) return false;
+}  // namespace
 
-    uint8_t orig[16] = {};
-    if (!Read(p, match, orig, stolenN)) return false;
+bool InstallCaptureRegHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, uint8_t modrm, uint8_t rex) {
+    // mov [rip+disp], reg
+    uint8_t head[7] = {rex, 0x89, modrm};
+    const int32_t disp = kSlotOffset - 7;
+    std::memcpy(head + 3, &disp, 4);
+    return PlaceCave(p, h, match, stolenN, head, sizeof head, nullptr, 0);
+}
 
-    const size_t CAVE = 0x108;
-    void* cave = AllocCaveNear(p, match, CAVE);
-    if (!cave) { Log("[cave] override AllocCaveNear failed near 0x%llX", (unsigned long long)match); return false; }
-    uintptr_t caveA = (uintptr_t)cave;
-    uintptr_t slot  = caveA + 0x100;
-
-    uint8_t buf[0x108] = {};
-    int n = 0;
+bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, float initial) {
     // mulss xmm0, [factor]: the game's number scaled, not replaced, since it changes with state
     // (sprinting raises it). 1.0 stores exactly what the game would have.
-    buf[n++] = 0xF3; buf[n++] = 0x0F; buf[n++] = 0x59; buf[n++] = 0x05;
-    int32_t disp = (int32_t)(slot - (caveA + 8));
-    std::memcpy(buf + n, &disp, 4); n += 4;
-    // the game's own store, then back
-    std::memcpy(buf + n, orig, stolenN); n += stolenN;
-    buf[n++] = 0xE9;
-    int32_t relBack = (int32_t)((match + stolenN) - (caveA + n + 4));
-    std::memcpy(buf + n, &relBack, 4); n += 4;
-    // the factor is in place before the jump in is
-    std::memcpy(buf + 0x100, &initial, sizeof(initial));
+    uint8_t head[8] = {0xF3, 0x0F, 0x59, 0x05};
+    const int32_t disp = kSlotOffset - 8;
+    std::memcpy(head + 4, &disp, 4);
+    return PlaceCave(p, h, match, stolenN, head, sizeof head, &initial, sizeof initial);
+}
 
-    SIZE_T put = 0;
-    if (!WriteProcessMemory(p.h, cave, buf, CAVE, &put) || put != CAVE) {
-        VirtualFreeEx(p.h, cave, 0, MEM_RELEASE);
-        Log("[cave] override write cave body failed"); return false;
-    }
-
-    uint8_t tramp[16]; std::memset(tramp, 0x90, sizeof(tramp));
-    tramp[0] = 0xE9;
-    int32_t relFwd = (int32_t)(caveA - (match + 5));
-    std::memcpy(tramp + 1, &relFwd, 4);
-    if (!WriteProtected(p, match, tramp, stolenN)) {
-        VirtualFreeEx(p.h, cave, 0, MEM_RELEASE);
-        Log("[cave] override write trampoline failed"); return false;
-    }
-
-    h.match = match; h.cave = caveA; h.slot = slot; h.stolen = stolenN;
-    std::memcpy(h.orig, orig, stolenN); h.installed = true;
-    Log("[cave] xmm0-scale installed @ 0x%llX -> cave 0x%llX slot 0x%llX (stole %d, factor %.3f)",
-        (unsigned long long)match, (unsigned long long)caveA,
-        (unsigned long long)slot, stolenN, initial);
-    return true;
+bool InstallSlotGuardHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN) {
+    uint8_t head[37] = {
+        0x80, 0x3D, 0, 0, 0, 0, 0x00,   // cmp byte ptr [slot], 0
+        0x74, 28,                       // je run
+        0x8B, 0x41, 0x10,               // mov eax, [rcx+0x10]     the slot held now
+        0x29, 0xD0,                     // sub eax, edx            less the one asked for
+        0x83, 0xF8, 0x01,               // cmp eax, 1
+        0x74, 15,                       // je refuse
+        0x83, 0xF8, 0xFF,               // cmp eax, -1
+        0x74, 10,                       // je refuse
+        0x83, 0xF8, 0x08,               // cmp eax, 8              round the end of the bar
+        0x74, 5,                        // je refuse
+        0x83, 0xF8, 0xF8,               // cmp eax, -8
+        0x75, 3,                        // jne run
+        0x31, 0xC0,                     // refuse: xor eax, eax
+        0xC3,                           // ret
+    };
+    const int32_t disp = kSlotOffset - 7;
+    std::memcpy(head + 2, &disp, 4);
+    const uint8_t off = 0;
+    return PlaceCave(p, h, match, stolenN, head, sizeof head, &off, sizeof off);
 }
 
 void RemoveHook(const Proc& p, CaveHook& h) {

@@ -70,12 +70,24 @@ Citron Lite supports **Minecraft 1.26.52 and 1.26.60** from the Microsoft Store 
 
 | Module | What it does |
 | --- | --- |
-| Zoom | Zooms in while you hold its key. Scroll to zoom further. |
-| Custom FOV | Sets your field of view past the game's slider. |
+| Zoom | Zooms in while you hold its key, down to 5 degrees. Scroll to zoom further; the hotbar stays where it is. |
+| Custom FOV | Sets your field of view past the game's slider, from 10 up to 170. |
 | Fullbright | Lights up the whole world. |
 | Third Person Nametags | Shows your own nametag in third person. |
 
-**Settings** has Stream Hide (Citron Lite disappears from recordings and streams), Taskbar Hide, a self-destruct key, the accent colour and your configs.
+**Settings** has Stream Hide (Citron Lite disappears from recordings and streams), Taskbar Hide, a self-destruct key, the accent colour, your configs and the two below.
+
+## In the game
+
+<p align="center">
+  <img alt="The Click GUI over the game" src="assets/screenshots/clickgui.png" width="760">
+</p>
+
+**Click GUI.** Press Right Shift in a game and every module is on one screen. A click switches a module. Its arrow, or a right click, opens its settings under it. Right Shift or Escape closes it. Citron Lite opens the game's chat behind the GUI: that is what frees your mouse and keeps your camera still, and it closes again with the GUI. Change the key under **In Game** in Settings.
+
+**Notifications** say what switched, and who you added to or took off your friends list, in the corner of the game. Switch them off under **In Game**.
+
+Stream Hide hides both of these from recordings too.
 
 <p align="center">
   <img alt="The Movement tab with Fast Fall open" src="assets/screenshots/movement.png" width="49%">
@@ -149,9 +161,11 @@ The client never runs code inside the game. It opens Minecraft's process and wor
 
 - **Reading.** A pointer walk from one global the game stores at startup leads to the client instance, the game's clock and your player. The entity registry behind your player lists every actor in the world, and positions, boxes, name tags and inventory come from their components.
 - **Capturing.** A few small code caves note what the game is working on as it runs: the camera, the block or entity under the crosshair, your hurt time.
-- **Changing.** Some modules write values (the camera for Aim Assist, your velocity for Velocity), some point an instruction at a number of their own (Reach), some skip one instruction (No Jump Delay).
+- **Changing.** Some modules write values (the camera for Aim Assist, your velocity for Velocity), some point an instruction at a number of their own (Reach, Custom FOV past 130), some skip one instruction (No Jump Delay).
 
 Every patch is written with the game's threads paused, and all of them come back out when the client closes.
+
+The Click GUI and the notifications are a second window, not part of the game: transparent, always on top, composited by Windows. It never takes the focus, and it lets clicks through unless the GUI is open. It only exists on screen while it has something on it, since a window over the game stops the game flipping straight to the display.
 
 ### Source layout
 
@@ -162,7 +176,8 @@ src/core/        game.cpp     the supported builds: where each site is, and stru
                  game_bindings.cpp  the game's own key bindings, from its options file
 src/backend/     the worker thread: attaching, the world each tick, input hooks, timing
 src/modules/     one file per module or group, by tab
-src/ui/          draw.cpp (the design kit) and panel.cpp (the window)
+src/ui/          draw.cpp (the design kit), panel.cpp (the window), ingame.cpp (the Click GUI and notifications)
+src/overlay.cpp  the transparent window over the game
 src/app.cpp      state, configs and hotkeys       src/model.cpp  the module catalog
 tools/           tests, the probe, and the scripts that make the logo and icons and embed the fonts
 assets/logo/     mark.svg and wordmark.svg are the masters; tools/make_logo.py makes the rest from them

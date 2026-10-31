@@ -21,6 +21,7 @@ struct Bindings {
     int sneak = VK_SHIFT;
     int sprint = VK_CONTROL;
     int inventory = 'E';
+    int chat = 'T';
     // Bedrock's options.txt calls this "drop". Parsed rather than assumed to be Q, because a
     // module that throws items away must use the key the player actually rebound.
     int drop = 'Q';

@@ -24,9 +24,9 @@ constexpr SiteTable k52{{
     {"Reach", false, 0x4BCC4A,
      "?? ?? F3 0F ?? 3D ?? ?? ?? ?? 40 B6 01 EB ?? 40 B6 01 0F 2E 3D ?? ?? ?? ?? 76 ?? F3 0F 10 3D"},
     {"ReachWall", false, 0, nullptr},
-    {"HotbarWheel", false, 0x5D938CA,
-     "48 8B 8B ?? ?? ?? ?? ?? 79 10 89 F8 C1 F8 1F 83 E0 09 01 F8 48 63 D0 48 69 C2 39 8E E3 38 "
-     "49 89 C0 49 C1 E8 3F 48 C1 F8 21 44 01 C0 8D 04 C0 29 C2 45 31 C0 E8"},
+    {"SelectSlot", false, 0x1F4860,
+     "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80 00 00 00 48 C7 85 00 02 00 00 FE FF FF FF "
+     "89 D6 83 FA 08 0F 87"},
     {"AirAccel", false, 0x2E118DB, "81 F3 41 0F 11 40 0C"},
     {"JumpDelay", false, 0x95EAFCD, "?? 83 7E ?? ?? ?? ?? ?? ?? ?? ?? 4C 89 F1 48 89 F2"},
     {"HitboxWidth", false, 0x1F80CB, "F3 0F 10 40 18 48 83 C4 20 5E C3 CC CC CC CC CC CC CC CC CC CC"},
@@ -36,6 +36,7 @@ constexpr SiteTable k52{{
     {"Perspective", false, 0xFB7430,
      "48 83 EC 38 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? "
      "41 B8 03 00 00 00"},
+    {"FovLimit", false, 0x46BD4A9, "F3 0F 5F 05 ?? ?? ?? ?? F3 0F 10 0D ?? ?? ?? ?? 0F 28 F1 F3 0F C2 F7 01"},
 }};
 
 constexpr SiteTable k60{{
@@ -47,9 +48,9 @@ constexpr SiteTable k60{{
      "84 C0 75 0A F3 0F 10 3D ?? ?? ?? ?? EB 08 F3 0F 10 3D ?? ?? ?? ?? 48 8B 03 48 8B 80 ?? ?? ?? ?? "
      "48 89 D9"},
     {"ReachWall", false, 0x4E0A391, "44 0F 2E C7 48 8B 8D ?? ?? ?? ?? ?? ?? 40 B6 01 44 0F 28 C7 EB 02 31 F6"},
-    {"HotbarWheel", false, 0x6583670,
-     "48 8B 8B ?? ?? ?? ?? ?? 79 10 89 F8 C1 F8 1F 83 E0 09 01 F8 48 63 D0 48 69 C2 39 8E E3 38 "
-     "49 89 C0 49 C1 E8 3F 48 C1 F8 21 44 01 C0 8D 04 C0 29 C2 45 31 C0 E8"},
+    {"SelectSlot", false, 0x2CD380,
+     "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC 88 02 00 00 48 8D AC 24 80 00 00 00 48 C7 85 00 02 00 00 FE FF FF FF "
+     "45 84 C0 75 6C 83 FA 08 77 67"},
     {"AirAccel", false, 0x336F02B, "81 F3 41 0F 11 40 0C"},
     {"JumpDelay", false, 0xAD34A55, "?? 83 7E ?? ?? ?? ?? ?? ?? ?? ?? 4C 89 F1 48 89 F2"},
     {"HitboxWidth", false, 0x2D0DAB, "F3 0F 10 40 18 48 83 C4 20 5E C3 CC CC CC CC CC CC CC CC CC CC"},
@@ -63,6 +64,7 @@ constexpr SiteTable k60{{
     {"Perspective", false, 0x5AFB0E0,
      "48 83 EC 38 48 8B 05 ?? ?? ?? ?? 48 31 E0 48 89 44 24 ?? 48 8B 01 48 8B 40 08 48 8D 54 24 ?? "
      "41 B8 03 00 00 00"},
+    {"FovLimit", false, 0x5309D99, "F3 0F 5F 05 ?? ?? ?? ?? F3 0F 10 0D ?? ?? ?? ?? 0F 28 F1 F3 0F C2 F7 01"},
 }};
 
 constexpr SiteTable kNone{};

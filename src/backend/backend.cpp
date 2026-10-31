@@ -21,6 +21,7 @@ int HookOffset(Site s) {
     case Site::Camera:
     case Site::HurtTime:
     case Site::Looking:
+    case Site::SelectSlot:
     case Site::HitboxWidth: return 0;
     case Site::Perspective: return 0x43;
     case Site::AirAccel: return 1;
@@ -34,7 +35,8 @@ const char* ServedBy(Site s) {
     case Site::HurtTime: return "Jump Reset, Velocity";
     case Site::Looking: return "Trigger Bot";
     case Site::Reach: return "Reach, Ghost Hand";
-    case Site::HotbarWheel: return "Zoom's scroll";
+    case Site::SelectSlot: return "Zoom's scroll";
+    case Site::FovLimit: return "Custom FOV past 130";
     case Site::AirAccel: return "Air Accel";
     case Site::JumpDelay: return "No Jump Delay";
     case Site::HitboxWidth: return "Hitbox";
@@ -269,8 +271,8 @@ void Backend::Impl::ForgetGame() {
     SetSnapTap(0);
     SetWheelOwned(false, 0);
     rd.Detach();
-    camHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = engine::CaveHook{};
-    jumpDelay = useDelay = ownNametag = hotbarWheel = CodePatch{};
+    camHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = slotHook = engine::CaveHook{};
+    jumpDelay = useDelay = ownNametag = fovLimit = CodePatch{};
     reachInstalled = reachKeep = false;
     reachFloats = 0;
     reachState = 0;
@@ -280,8 +282,11 @@ void Backend::Impl::ForgetGame() {
     fovAddr = 0;
     fovScanCursor = 0;
     fovScanDone = false;
+    fovBoundsRead = false;
+    fovCeiling = 0;
     zoomActive = false;
     customFovOn = false;
+    slotsHeld = false;
     gammaRecords.clear();
     gammaCandidates.clear();
     gammaOriginal.clear();
@@ -314,11 +319,12 @@ void Backend::Impl::RestoreAll() {
     RestoreZoom();
     if (customFovOn && fovAddr && customFovOriginal > 10.f) engine::Write(proc, fovAddr, customFovOriginal);
     customFovOn = false;
+    RestoreFovBounds();
     ReleaseClock();
     RestoreGamma();
     ReachRestore();
-    for (CodePatch* p : {&jumpDelay, &useDelay, &ownNametag, &hotbarWheel}) ClearPatch(*p);
-    for (engine::CaveHook* h : {&camHook, &hurtHook, &lookHook, &perspHook, &airHook}) {
+    for (CodePatch* p : {&jumpDelay, &useDelay, &ownNametag, &fovLimit}) ClearPatch(*p);
+    for (engine::CaveHook* h : {&camHook, &hurtHook, &lookHook, &perspHook, &airHook, &slotHook}) {
         if (h->installed) engine::RemoveHook(proc, *h);
         *h = engine::CaveHook{};
     }
@@ -436,6 +442,7 @@ void Backend::Impl::Worker() {
         FovTick(m);
         ZoomTick(m);
         CustomFovTick(m);
+        FovBoundsTick(m);
         FullbrightTick(m);
         NametagTick(m);
 
@@ -518,6 +525,17 @@ void Backend::Sync(const AppState& state) {
     impl->modulesUi = m;
     impl->WindowFeaturesTick(m);
 }
+
+bool Backend::PressKey(int vk) {
+    if (!impl->proc.ok()) return false;
+    return gamebind::Send(vk, true) && gamebind::Send(vk, false);
+}
+
+void Backend::SetGuiOpen(bool open) { impl->guiOpen.store(open, std::memory_order_relaxed); }
+
+bool Backend::PressChat() { return PressKey(gamebind::Resolve(impl->proc.h).chat); }
+
+unsigned long Backend::GamePid() const { return impl->proc.pid; }
 
 BackendStatus Backend::Status() const {
     std::lock_guard<std::mutex> g(impl->mtx);

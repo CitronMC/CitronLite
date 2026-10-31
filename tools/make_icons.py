@@ -32,6 +32,7 @@ ICONS = [
     ("ChevronRight", "chevron-right", 2.0),
     ("Pencil", "pencil", 2.0),
     ("Trash", "trash-2", 2.0),
+    ("ChevronDown", "chevron-down", 2.0),
 ]
 
 CELL = 48          # px an icon in the atlas

@@ -55,6 +55,7 @@ std::string FormatValue(float value, float step) {
 
 ModuleState DefaultState(const ModuleDef& d) {
     ModuleState st;
+    st.on = d.startsOn;
     st.key = d.defaultKey;
     for (const auto& s : d.sliders) {
         if (s.range) {
@@ -196,6 +197,8 @@ void BuildModel(AppState& s) {
     def("taskbarhide", "Taskbar Hide", "Takes this window off the taskbar", Cat::Settings)
         .Key("Insert")
         .Check("hideWindow", "Also Hide The Window", false);
+    def("clickgui", "Click GUI", "Opens over the game", Cat::Settings).Bind(BindKind::Fire).NoToggle().Key("RShift");
+    def("notifications", "Notifications", "Says when something switches, over the game", Cat::Settings).StartsOn();
     def("selfdestruct", "Self-Destruct", "Puts the game back and closes Citron Lite", Cat::Settings)
         .Bind(BindKind::Fire)
         .NoToggle()

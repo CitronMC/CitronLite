@@ -16,12 +16,14 @@ add_executable(CitronLite WIN32
     src/model.cpp
     src/config_io.cpp
     src/platform_win32_dx11.cpp
+    src/overlay.cpp
     src/logo.cpp
     src/telemetry.cpp
     src/updater.cpp
     src/ui_script.cpp
     src/ui/draw.cpp
     src/ui/panel.cpp
+    src/ui/ingame.cpp
     src/core/engine.cpp
     src/core/game.cpp
     src/core/bedrock.cpp
@@ -54,7 +56,7 @@ add_executable(CitronLite WIN32
 target_include_directories(CitronLite PRIVATE include src ${IMGUI} ${IMGUI}/backends)
 target_compile_definitions(CitronLite PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(CitronLite PRIVATE
-    Threads::Threads d3d11 dxgi d3dcompiler dwmapi gdi32 user32 ole32 imm32 comdlg32 shell32 winhttp
+    Threads::Threads d3d11 dxgi d3dcompiler dcomp dwmapi gdi32 user32 ole32 imm32 comdlg32 shell32 winhttp
     bcrypt version)
 
 enable_testing()
@@ -73,6 +75,7 @@ citron_test(option_record tools/option_record_tests.cpp)
 citron_test(game tools/game_tests.cpp src/core/game.cpp)
 target_link_libraries(test_game PRIVATE version)
 citron_test(names tools/names_tests.cpp)
+citron_test(slot_guard tools/slot_guard_tests.cpp src/core/engine.cpp)
 citron_test(fastfall tools/fastfall_tests.cpp)
 add_executable(test_ui tools/ui_tests.cpp src/config_io.cpp src/model.cpp)
 target_include_directories(test_ui PRIVATE include)

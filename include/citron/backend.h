@@ -43,6 +43,11 @@ public:
     BackendStatus Status() const;
     // The names middle clicked since the last call; each one is added or, when listed, removed.
     std::vector<std::string> TakeFriendEdits();
+    // Presses a key in the game, your chat binding or another. False when no game is attached.
+    bool PressChat();
+    bool PressKey(int vk);
+    void SetGuiOpen(bool open);
+    unsigned long GamePid() const;
 
 private:
     struct Impl;
@@ -53,5 +58,11 @@ private:
 // clicks Citron Lite sends itself never count.
 bool PhysKeyDown(int vk);
 uint32_t PhysKeyEdges(int vk);
+// While the keyboard is taken, physical key presses stop at the hook instead of reaching whatever is in
+// front. They still count here.
+void SetKeysTaken(bool on);
+// How many keys and buttons have gone down, and which was last.
+uint32_t KeyPressCount();
+int LastKeyPress();
 
 }  // namespace citron

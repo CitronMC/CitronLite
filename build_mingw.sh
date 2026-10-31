@@ -38,6 +38,7 @@ if [ "$MODE" = "tests" ]; then
   run_test game tools/game_tests.cpp src/core/game.cpp -lversion
   run_test names tools/names_tests.cpp
   run_test fastfall tools/fastfall_tests.cpp
+  run_test slot_guard tools/slot_guard_tests.cpp src/core/engine.cpp
   echo "  TEST ui"
   CITRON_LTO=0 CITRON_OBJ=build/obj-test CITRON_OUT=build/test/CitronLite.exe "$0" > build/test_ui_build.log 2>&1 || { cat build/test_ui_build.log; exit 1; }
   "$CXX" $TESTFLAGS tools/ui_tests.cpp src/config_io.cpp src/model.cpp -lcomdlg32 -lshell32 -o build/test_ui.exe
@@ -60,13 +61,13 @@ LTO="-flto=auto"
 INCLUDES="-I$IMGUI -I$IMGUI/backends -Iinclude -Isrc"
 CXXFLAGS="-std=c++20 -O2 $LTO -ffunction-sections -fdata-sections -fstack-protector-strong -DNDEBUG -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -pthread $INCLUDES -Wall -Wno-unknown-pragmas"
 LDFLAGS="-mwindows -static -static-libgcc -static-libstdc++ -pthread $LTO -Wl,--gc-sections -Wl,--dynamicbase -Wl,--high-entropy-va -Wl,--nxcompat"
-LIBS="-ld3d11 -ldxgi -ld3dcompiler -ldwmapi -lgdi32 -luser32 -lole32 -limm32 -lcomdlg32 -lshell32 -lwinhttp -lbcrypt -lversion"
+LIBS="-ld3d11 -ldxgi -ld3dcompiler -ldcomp -ldwmapi -lgdi32 -luser32 -lole32 -limm32 -lcomdlg32 -lshell32 -lwinhttp -lbcrypt -lversion"
 
 IMGUI_SRC="$IMGUI/imgui.cpp $IMGUI/imgui_draw.cpp $IMGUI/imgui_tables.cpp $IMGUI/imgui_widgets.cpp
 $IMGUI/backends/imgui_impl_win32.cpp $IMGUI/backends/imgui_impl_dx11.cpp"
-APP_SRC="src/main.cpp src/app.cpp src/model.cpp src/config_io.cpp src/platform_win32_dx11.cpp src/logo.cpp
+APP_SRC="src/main.cpp src/app.cpp src/model.cpp src/config_io.cpp src/platform_win32_dx11.cpp src/overlay.cpp src/logo.cpp
 src/telemetry.cpp src/updater.cpp src/ui_script.cpp
-src/ui/draw.cpp src/ui/panel.cpp
+src/ui/draw.cpp src/ui/panel.cpp src/ui/ingame.cpp
 src/core/engine.cpp src/core/game.cpp src/core/bedrock.cpp src/core/game_bindings.cpp
 src/backend/backend.cpp src/backend/input.cpp src/backend/timing.cpp src/backend/world.cpp
 src/modules/combat/aimassist.cpp src/modules/combat/triggerbot.cpp src/modules/combat/clicker.cpp

@@ -37,6 +37,7 @@ struct ModuleDef {
     Cat cat = Cat::Combat;
     std::string group;           // the heading it sits under in its tab's list
     bool hasToggle = true;
+    bool startsOn = false;
     BindKind bind = BindKind::Toggle;
     bool names = false;          // keeps a list of player names (Friends)
     bool hidden = false;         // saved with configs but without a row of its own in the list
@@ -65,6 +66,7 @@ struct ModuleDef {
     ModuleDef& Key(std::string k) { defaultKey = std::move(k); return *this; }
     ModuleDef& Names() { names = true; return *this; }
     ModuleDef& NoToggle() { hasToggle = false; return *this; }
+    ModuleDef& StartsOn() { startsOn = true; return *this; }
     ModuleDef& Hidden() { hidden = true; return *this; }
 };
 

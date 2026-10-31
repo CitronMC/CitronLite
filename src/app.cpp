@@ -6,6 +6,7 @@
 #include "citron/telemetry.h"
 #include "citron/updater.h"
 #include "ui/draw.h"
+#include "ui/rows.h"
 #include <windows.h>
 #include <algorithm>
 #include <cctype>
@@ -26,13 +27,14 @@ std::string Trim(const std::string& s) {
 
 std::string LastConfigPath() { return cfgio::Dir() + "last-config.txt"; }
 
-// In gameplay: Bedrock in front with its cursor hidden, so a letter bind never fires while typing in chat.
-bool InGame() {
-    if (!platform::ForegroundIsBedrock(0)) return false;
+bool CursorShowing() {
     CURSORINFO ci{};
     ci.cbSize = sizeof ci;
-    return GetCursorInfo(&ci) && !(ci.flags & CURSOR_SHOWING);
+    return GetCursorInfo(&ci) && (ci.flags & CURSOR_SHOWING);
 }
+
+// In gameplay: Bedrock in front with its cursor hidden, so a letter bind never fires while typing in chat.
+bool InGame() { return platform::ForegroundIsBedrock(0) && !CursorShowing(); }
 
 }  // namespace
 
@@ -51,6 +53,7 @@ void App::Init(bool isHeadless) {
 }
 
 void App::Shutdown() {
+    if (gui != Gui::Closed) CloseGui(true);
     if (!headless) SaveActive();
     backend.Shutdown();
     if (!headless) {
@@ -73,12 +76,24 @@ void App::Preview(const std::string& key, const std::string& bind) {
 
 void App::SaveTo(const std::string& path) const { cfgio::Write(path, s.mods, s.accent); }
 
-void App::Frame(const FrameInput& in, FrameOutput& out) {
+void App::Tick() {
     ApplyFriendEdits();
     PollHotkeys();
-    DrawPanel(in, out);
+    ClickGuiTick();
+    NoteToggles();
     backend.Sync(s);
     Autosave();
+}
+
+void App::Frame(const FrameInput& in, FrameOutput& out) { DrawPanel(in, out); }
+
+void* App::GameWindow() const {
+    return platform::ForegroundIsBedrock(backend.GamePid()) ? GetForegroundWindow() : nullptr;
+}
+
+bool App::StreamHidden() const {
+    const ModuleState* st = s.St("streamhide");
+    return st && st->on;
 }
 
 // Configs.
@@ -107,6 +122,7 @@ bool App::LoadConfig(const std::string& name) {
     s.mods = fresh.mods;
     s.accent = accent;
     s.activeConfig = name;
+    seenOn.clear();
     autosaveBaseline = autosaveSeen = cfgio::Serialize(s.mods, s.accent);
     autosaveDirtySince = 0;
     RememberActive();
@@ -238,38 +254,133 @@ void App::ExportConfig() {
 // Hotkeys.
 // Presses are counted by the low-level hooks as they happen, so a slow frame never misses a tap; a
 // toggle flips once per press since the last look.
+uint32_t App::PressesOf(const std::string& id, int vk) {
+    const uint32_t now = vk ? PhysKeyEdges(vk) : 0u;
+    auto it = seenPresses.find(id);
+    const uint32_t n = it != seenPresses.end() && it->second.first == vk ? now - it->second.second : 0u;
+    seenPresses[id] = {vk, now};
+    return n;
+}
+
 void App::PollHotkeys() {
     const bool liteFront = hwnd && GetForegroundWindow() == (HWND)hwnd;
     const bool blocked = !s.listening.empty() || ui::Editing();
     const bool live = !justBound && !blocked && (liteFront || InGame());
-    justBound = false;
-
-    auto pending = [&](const std::string& id, int vk) -> uint32_t {
-        const uint32_t now = vk ? PhysKeyEdges(vk) : 0u;
-        auto it = seenPresses.find(id);
-        const uint32_t n = it != seenPresses.end() && it->second.first == vk ? now - it->second.second : 0u;
-        seenPresses[id] = {vk, now};
-        return n;
-    };
 
     // These two answer whatever has focus: one brings a hidden window back, the other is a panic key.
     if (ModuleState* t = s.St("taskbarhide")) {
-        const uint32_t n = pending("taskbarhide", LabelToVK(t->key));
+        const uint32_t n = PressesOf("taskbarhide", LabelToVK(t->key));
         if (!blocked && (n & 1u)) t->on = !t->on;
     }
     if (ModuleState* sd = s.St("selfdestruct")) {
-        const uint32_t n = pending("selfdestruct", LabelToVK(sd->key));
+        const uint32_t n = PressesOf("selfdestruct", LabelToVK(sd->key));
         if (!blocked && n) {
             SelfDestruct();
             return;
         }
     }
     for (const ModuleDef& d : s.defs) {
-        if (d.key == "taskbarhide" || d.key == "selfdestruct") continue;
+        if (d.key == "taskbarhide" || d.key == "selfdestruct" || d.key == "clickgui") continue;
         ModuleState* st = s.St(d.key);
         if (!st) continue;
-        const uint32_t n = pending(d.key, LabelToVK(st->key));
+        const uint32_t n = PressesOf(d.key, LabelToVK(st->key));
         if (live && d.hasToggle && d.bind == BindKind::Toggle && (n & 1u)) st->on = !st->on;
+    }
+}
+
+// The Click GUI. An outside program cannot stop the mouse reaching the game: the game reads it raw,
+// past anything a hook can hold back. So it asks the game itself: the chat screen opens behind the GUI,
+// which frees the pointer and stills the camera, and everything on it is out of the way of the clicks,
+// which land on the overlay. Should chat not come, the pause screen does the same.
+void App::ClickGuiTick() {
+    const ModuleState* key = s.St("clickgui");
+    const uint32_t pressed = PressesOf("clickgui", key ? LabelToVK(key->key) : 0);
+    const uint32_t escape = PressesOf("gui:esc", VK_ESCAPE), enter = PressesOf("gui:enter", VK_RETURN);
+    const bool bound = justBound;
+    justBound = false;
+    const unsigned long long now = GetTickCount64();
+    if (gui == Gui::Closed) {
+        if (pressed && !bound && s.listening.empty() && !ui::Editing() && InGame() && backend.PressChat()) {
+            gui = Gui::Opening;
+            guiAt = now;
+            guiTriedPause = false;
+            SetKeysTaken(true);
+            backend.SetGuiOpen(true);
+        }
+        return;
+    }
+    if (!GameWindow()) {
+        CloseGui(false);
+        return;
+    }
+    if (gui == Gui::Opening) {
+        if (CursorShowing()) {
+            gui = Gui::Open;
+        } else if (now - guiAt > 700) {
+            if (guiTriedPause) {
+                CloseGui(false);
+            } else {
+                guiTriedPause = true;
+                guiAt = now;
+                backend.PressKey(VK_ESCAPE);
+            }
+        }
+        return;
+    }
+    if (s.listening.empty()) {
+        guiPressSeen = KeyPressCount();
+        if (pressed || escape || enter) CloseGui(true);
+        return;
+    }
+    // a key for a module: the next press, a left click cancels and Escape clears
+    if (const uint32_t presses = KeyPressCount(); presses != guiPressSeen) {
+        guiPressSeen = presses;
+        const int vk = LastKeyPress();
+        ModuleState* st = s.St(s.listening);
+        if (vk == VK_ESCAPE) {
+            if (st) st->key.clear();
+        } else if (vk != VK_LBUTTON) {
+            const std::string label = LabelForVK(vk);
+            if (label.empty()) return;
+            if (st) st->key = label;
+        }
+        s.listening.clear();
+        justBound = true;
+    }
+}
+
+void App::CloseGui(bool backToGame) {
+    SetKeysTaken(false);
+    backend.SetGuiOpen(false);
+    gui = Gui::Closed;
+    s.listening.clear();
+    if (backToGame) backend.PressKey(VK_ESCAPE);
+}
+
+// Notifications.
+void App::PushToast(const std::string& title, const std::string& state, bool lit) {
+    const auto same = std::find_if(toasts.begin(), toasts.end(), [&](const Toast& t) { return t.title == title; });
+    if (same != toasts.end()) toasts.erase(same);
+    toasts.push_back({title, state, lit, GetTickCount64()});
+    if (toasts.size() > 5) toasts.erase(toasts.begin());
+}
+
+void App::NoteToggles() {
+    const unsigned long long now = GetTickCount64();
+    toasts.erase(std::remove_if(toasts.begin(), toasts.end(),
+                                [&](const Toast& t) { return (float)(now - t.atMs) / 1000.f >= kToastSeconds; }),
+                 toasts.end());
+    const bool show = ui::StateOn(s, "notifications") && gui == Gui::Closed && GameWindow();
+    for (const ModuleDef& d : s.defs) {
+        const ModuleState* st = d.cat == Cat::Settings ? nullptr : s.St(d.key);
+        if (!st) continue;
+        const auto seen = seenOn.find(d.key);
+        if (seen == seenOn.end()) {
+            seenOn[d.key] = st->on;
+        } else if (seen->second != st->on) {
+            seen->second = st->on;
+            if (show) PushToast(d.name, st->on ? "On" : "Off", st->on);
+        }
     }
 }
 
@@ -278,8 +389,10 @@ void App::ApplyFriendEdits() {
     for (const std::string& name : backend.TakeFriendEdits()) {
         if (!f) continue;
         auto it = std::find_if(f->names.begin(), f->names.end(), [&](const std::string& n) { return Lower(n) == Lower(name); });
-        if (it != f->names.end()) f->names.erase(it);
+        const bool removed = it != f->names.end();
+        if (removed) f->names.erase(it);
         else f->names.push_back(name);
+        if (ui::StateOn(s, "notifications")) PushToast(name, removed ? "Removed" : "Added", !removed);
     }
 }
 

@@ -119,6 +119,9 @@ bool Slider(const char* id, const R& row, const char* label, float labelW, float
 bool RangeSlider(const char* id, const R& row, const char* label, float labelW, float& lo, float& hi, float mn, float mx, float step,
                  const char* unit);
 // `dots` marks options with a small light, one flag an option.
+// Label and value over the track, for a narrow column.
+bool StackSlider(const char* id, const R& row, const char* label, float& v, float mn, float mx, float step, const char* unit);
+bool StackRange(const char* id, const R& row, const char* label, float& lo, float& hi, float mn, float mx, float step, const char* unit);
 bool Segmented(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel, const bool* dots = nullptr);
 float SegmentedWidth(const std::vector<std::string>& options);
 bool ChoiceStepper(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel);
@@ -130,7 +133,7 @@ float BindButtonWidth(const std::string& bind, bool capturing);
 enum class ButtonKind { Primary, Quiet, Ghost, Danger };
 Hit Button(const char* id, const R& r, const char* label, ButtonKind kind);
 float ButtonWidth(const char* label);
-enum class Icon { Close, Minimize, Keyboard, Check, ChevronLeft, ChevronRight, Pencil, Trash };
+enum class Icon { Close, Minimize, Keyboard, Check, ChevronLeft, ChevronRight, Pencil, Trash, ChevronDown };
 void DrawIcon(Icon i, float cx, float cy, float size, Col c);
 void SetIconTexture(ImTextureID tex);
 Hit IconButton(const char* id, const R& r, Icon icon, float iconSize = 14.f, bool danger = false);
@@ -153,7 +156,8 @@ void HueRing(float cx, float cy, float r);
 float PickerHeight();
 bool ColourPicker(const char* id, float x, float y, float w, unsigned& rgb);
 
-// Every frame, before anything is drawn.
-void BeginFrame(ImDrawList* dl, float scale, float fontScale, unsigned accent);
+// Every frame, before anything is drawn. `surface` is which window it is: each keeps its own frame count,
+// so an animation on one is not taken for gone while the other draws.
+void BeginFrame(ImDrawList* dl, float scale, float fontScale, unsigned accent, int surface = 0);
 
 }  // namespace citron::ui

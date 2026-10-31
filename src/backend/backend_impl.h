@@ -128,6 +128,7 @@ struct Backend::Impl {
     std::thread th, hookTh;
     std::atomic<DWORD> hookTid{0};
     std::atomic<bool> running{false};
+    std::atomic<bool> guiOpen{false};   // the Click GUI: nothing acts, whatever its settings say
     std::mutex stopMtx;
     std::condition_variable stopCv;
     std::mutex hookStartMtx;
@@ -160,7 +161,7 @@ struct Backend::Impl {
     ULONGLONG focusAt = 0;
 
     // caves
-    engine::CaveHook camHook, hurtHook, lookHook, perspHook, hitboxHook, airHook;
+    engine::CaveHook camHook, hurtHook, lookHook, perspHook, hitboxHook, airHook, slotHook;
 
     // the crosshair
     bool lookBlock = false, lookEntity = false, lookKnown = false;
@@ -186,7 +187,7 @@ struct Backend::Impl {
     bool reachChanceOn = true;
 
     // small patches
-    CodePatch jumpDelay, useDelay, ownNametag, hotbarWheel;
+    CodePatch jumpDelay, useDelay, ownNametag, fovLimit;
 
     // Aim Assist
     uintptr_t aimTarget = 0;
@@ -270,6 +271,14 @@ struct Backend::Impl {
     clock_t_::time_point zoomLastTick{};
     bool customFovOn = false;
     float customFovOriginal = 0.f;
+    bool fovBoundsRead = false;
+    float fovMinGiven = 0.f, fovMaxGiven = 0.f, fovMinSet = 0.f, fovMaxSet = 0.f;   // the option record's own bounds, and what is there now
+    uintptr_t fovCeiling = 0;         // our page: the float getFov's last clamp reads while it is lifted
+
+    // Zoom's wheel: the hotbar stays put
+    bool slotsHeld = false;
+    clock_t_::time_point slotsFreeAt{}, nextSlotTry{};
+    uint32_t hotbarSeen[9] = {};
 
     // Fullbright
     struct GammaScan { int pass = 0; uintptr_t cursor = 0; std::vector<uintptr_t> keys; std::vector<uint8_t> scratch; } gammaScan;
@@ -319,7 +328,7 @@ struct Backend::Impl {
     // Shared helpers (backend.cpp).
     bool GameFocused();
     bool CursorHidden() const;
-    bool InGame() { return GameFocused() && CursorHidden(); }
+    bool InGame() { return !guiOpen.load(std::memory_order_relaxed) && GameFocused() && CursorHidden(); }
     bool PhysicalBindingDown(int code) const;
     bool WritePatch(CodePatch& p, uintptr_t at, const uint8_t* bytes, int n, const uint8_t* expect);
     void ClearPatch(CodePatch& p);
@@ -379,6 +388,10 @@ struct Backend::Impl {
     void ZoomTick(const Modules& m);
     void RestoreZoom();
     void CustomFovTick(const Modules& m);
+    void FovBoundsTick(const Modules& m);
+    void SetFovBounds(float lo, float hi);
+    void RestoreFovBounds();
+    void SetFovCeiling(bool lifted);
     void SetWheelSuppressed(bool on);
     void FullbrightTick(const Modules& m);
     bool GammaRecordLooksRight(uintptr_t record, float& value, float& fallback) const;

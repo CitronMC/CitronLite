@@ -158,7 +158,9 @@ std::string Script() {
     // Settings: nothing here moves, whatever is on it
     s.Tab("settings");
     Rects_(s, "settings");
-    s.Click("accent#4");
+    s.ClickAt("accent#4", 0.04f, 0.1f);   // the far corner of a swatch's target counts
+    s.Click("set:notes");
+    s.Click("set:gui").Key('G');
     s.Click("set:stream");
     s.Click("set:task");
     s.Click("set:task:bind").Key('J');
@@ -184,6 +186,31 @@ std::string ConfigScript() {
     return s.text;
 }
 
+// The Click GUI, drawn in the window for the test.
+std::string GuiScript() {
+    Session s;
+    Rects_(s, "gui");
+    s.Click("gui:row:reach");
+    s.Click("gui:row:zoom");
+    s.Click("gui:more:aimassist")("wait 260");
+    Rects_(s, "gui-open");
+    s.ClickAt("gui:set:aimassist:strength", 0.75f);
+    s.Down("gui:set:aimassist:smoothing", 0.5f).Move("gui:set:aimassist:smoothing", 0.25f)("up");
+    s.Click("gui:set:aimassist:aimpart#next");
+    s.Click("gui:set:aimassist:onlyLmb");
+    s.Click("gui:bind:aimassist").Key('K');
+    s.Click("gui:more:aimassist")("wait 260");
+    s("click @gui:row:velocity 0.5 0.5 1")("wait 260");   // a right click opens it
+    s.ClickAt("gui:set:velocity:horizontal", 0.95f);
+    s("click @gui:row:velocity 0.5 0.5 1")("wait 260");
+    s.Click("gui:more:clicker")("wait 260");
+    s.Click("gui:side#1")("wait 200");
+    s.Click("gui:bind:rightclicker").Key('N');
+    s.ClickAt("gui:set:rightclicker:cps", 0.95f);
+    s.Click("gui:row:clicker");
+    return s.text;
+}
+
 // A second session for the accent picker, which floats over the page.
 std::string PickerScript() {
     Session s;
@@ -198,14 +225,14 @@ std::string PickerScript() {
     return s.text;
 }
 
-std::map<std::string, ModuleState> Run(const std::string& exe, const std::string& script, float scale, unsigned* accent) {
+std::map<std::string, ModuleState> Run(const std::string& exe, const std::string& script, float scale, unsigned* accent, const char* extra = "") {
     const std::string scriptPath = g_dir + "ui_script.txt", dumpPath = g_dir + "ui_state.txt";
     std::ofstream(scriptPath, std::ios::binary) << script;
     DeleteFileA(dumpPath.c_str());
 
     char scaleText[16];
     std::snprintf(scaleText, sizeof scaleText, "%.2f", scale);
-    std::string cmd = "\"" + exe + "\" --shot --shotscale=" + scaleText + " --script=\"" + scriptPath + "\" --dump=\"" + dumpPath + "\"";
+    std::string cmd = "\"" + exe + "\" --shot --shotscale=" + scaleText + " --script=\"" + scriptPath + "\" --dump=\"" + dumpPath + "\"" + extra;
     STARTUPINFOA si{};
     si.cb = sizeof si;
     si.dwFlags = STARTF_USESHOWWINDOW;
@@ -237,23 +264,39 @@ std::map<std::string, ModuleState> Run(const std::string& exe, const std::string
 
 bool Near(float a, float b, float tolerance) { return std::fabs(a - b) <= tolerance; }
 
-// The Settings page: both columns start, end and meet on the same lines, at the page's own edges.
+// The Settings page: three rows of two cards, each lined up with the one beside it, at the page's edges.
 void CheckSettingsLayout(const Rects& r) {
     auto card = [&](const char* name) {
         const auto it = r.find(std::string("card:") + name);
         Check(it != r.end(), std::string("no card called ") + name);
         return it == r.end() ? Rect{} : it->second;
     };
-    const Rect a = card("Appearance"), b = card("Client"), c = card("Self-Destruct"), d = card("Configs"), e = card("Citron Lite");
+    const Rect rows[3][2] = {{card("Appearance"), card("In Game")}, {card("Client"), card("Configs")}, {card("Self-Destruct"), card("Citron Lite")}};
     constexpr float kGap = 12.f, kLeft = 16.f, kTop = 56.f, kRight = 904.f, kBottom = 584.f;
-    Check(a.x == kLeft && b.x == kLeft && c.x == kLeft, "the left column's edge");
-    Check(d.x + d.w == kRight && e.x + e.w == kRight, "the right column's edge");
-    Check(a.w == b.w && b.w == c.w && c.w == d.w && d.w == e.w, "the columns' width");
-    Check(d.x - (a.x + a.w) == kGap, "the gutter between the columns");
-    Check(a.y == kTop && d.y == kTop, "the columns' top");
-    Check(c.y + c.h == kBottom && e.y + e.h == kBottom, "the columns' last line");
-    Check(b.y - (a.y + a.h) == kGap && c.y - (b.y + b.h) == kGap && e.y - (d.y + d.h) == kGap, "the gutters down the columns");
-    Check(b.y + b.h == d.y + d.h && c.y == e.y && c.h == e.h, "the lower cards start on one line");
+    for (int i = 0; i < 3; ++i) {
+        const Rect& a = rows[i][0];
+        const Rect& b = rows[i][1];
+        Check(a.x == kLeft && b.x + b.w == kRight, "the page's edges, row " + std::to_string(i));
+        Check(a.w == b.w && a.w == rows[0][0].w, "the columns' width, row " + std::to_string(i));
+        Check(b.x - (a.x + a.w) == kGap, "the gutter between the columns, row " + std::to_string(i));
+        Check(a.y == b.y && a.h == b.h, "the two cards line up, row " + std::to_string(i));
+        if (i) Check(a.y - (rows[i - 1][0].y + rows[i - 1][0].h) == kGap, "the gutter above row " + std::to_string(i));
+    }
+    Check(rows[0][0].y == kTop, "the page's top");
+    Check(rows[2][0].y + rows[2][0].h == kBottom, "the page's last line");
+}
+
+// Nothing to miss between two colours.
+void CheckAccentTargets(const Rects& r) {
+    for (int i = 0; i + 1 < 7; ++i) {
+        const auto a = r.find("accent#" + std::to_string(i)), b = r.find("accent#" + std::to_string(i + 1));
+        Check(a != r.end() && b != r.end(), "the accent's swatches");
+        if (a == r.end() || b == r.end()) return;
+        Check(Near(a->second.x + a->second.w, b->second.x, 0.01f), "two colours' targets meet");
+        Check(a->second.h >= 30.f, "a colour's target is as tall as the row");
+    }
+    const auto last = r.find("accent#6"), custom = r.find("accent:custom");
+    Check(last != r.end() && custom != r.end() && Near(last->second.x + last->second.w, custom->second.x, 0.01f), "the last one meets the custom colour's");
 }
 
 }  // namespace
@@ -313,8 +356,12 @@ int main(int argc, char** argv) {
         Check(m["keybindpearl"].on && m["keybindpearl"].key == "Q", "Items");
         Check(m["tpnametags"].on, "Visuals");
 
-        CheckSettingsLayout(ReadRects(RectsPath("settings")));
-        Check(accent == 0xFF7A6B, "a swatch");
+        const Rects settings = ReadRects(RectsPath("settings"));
+        CheckSettingsLayout(settings);
+        CheckAccentTargets(settings);
+        Check(accent == 0xFF7A6B, "a swatch, by the corner of its target");
+        Check(!m["notifications"].on, "the notifications' switch");
+        Check(m["clickgui"].key == "G", "the Click GUI's key: '" + m["clickgui"].key + "'");
         Check(m["streamhide"].on, "a switch in Settings");
         Check(m["taskbarhide"].on && m["taskbarhide"].key == "J", "Taskbar Hide's switch and key: '" + m["taskbarhide"].key + "'");
         Check(m["taskbarhide"].checks["hideWindow"], "Also Hide The Window");
@@ -325,6 +372,24 @@ int main(int argc, char** argv) {
         Check(ReadRects(RectsPath("named")).count("cfg:Alpha:row"), "a new config named as it comes");
         Check(ReadRects(RectsPath("renamed")).count("cfg:Beta:row"), "a config renamed");
         Check(!ReadRects(RectsPath("deleted")).count("cfg:Beta:row"), "a config deleted");
+
+        auto g = Run(exe, GuiScript(), scale, &ignored, " --gui");
+        const Rects cols = ReadRects(RectsPath("gui")), opened = ReadRects(RectsPath("gui-open"));
+        for (const char* col : {"combat", "movement", "items", "visuals"}) Check(cols.count(std::string("gui:col:") + col), std::string("a column for ") + col);
+        Check(cols.at("gui:col:combat").y == cols.at("gui:col:visuals").y, "the columns stand on one line");
+        Check(!cols.count("gui:row:rightclicker"), "the right side has no row of its own");
+        Check(opened.at("gui:row:reach").y > cols.at("gui:row:reach").y, "open settings push the rows below down");
+        Check(g["reach"].on && g["zoom"].on, "a click on a row switches it");
+        // a fraction of the strip, and the track stands a knob's width inside it
+        Check(Near(g["aimassist"].sliders["strength"], 79.f, 3.f), "a slider in the GUI: " + std::to_string(g["aimassist"].sliders["strength"]));
+        Check(Near(g["aimassist"].sliders["smoothing"], 24.f, 3.f), "a dragged slider in the GUI: " + std::to_string(g["aimassist"].sliders["smoothing"]));
+        Check(g["aimassist"].choices["aimpart"] == 1, "a choice in the GUI");
+        Check(!g["aimassist"].checks["onlyLmb"], "a checkbox in the GUI");
+        Check(g["aimassist"].key == "K", "a key in the GUI: '" + g["aimassist"].key + "'");
+        Check(g["velocity"].sliders["horizontal_max"] > 180.f, "a right click opens the settings: " + std::to_string(g["velocity"].sliders["horizontal_max"]));
+        Check(g["rightclicker"].key == "N", "Auto Clicker's right side in the GUI: '" + g["rightclicker"].key + "'");
+        Check(g["rightclicker"].sliders["cps_max"] > 18.f, "the right side's numbers in the GUI");
+        Check(g["rightclicker"].on && !g["clicker"].on, "the row works the side that is picked");
 
         unsigned picked = 0;
         auto after = Run(exe, PickerScript(), scale, &picked);

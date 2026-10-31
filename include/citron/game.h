@@ -16,13 +16,14 @@ enum class Site : uint8_t {
     Looking,      // mov eax, [rax+0x18]: rax is the HitResult under the crosshair
     Reach,        // the pick's reach clamp
     ReachWall,    // survival's wall test after it (1.26.60)
-    HotbarWheel,  // the mouse wheel's step of the selected slot (add at +7)
+    SelectSlot,   // PlayerInventory::selectSlot(this, slot, flag): every way the held slot changes
     AirAccel,     // the store of the air acceleration (one byte before the movss)
     JumpDelay,    // jne over the jump while the jump cooldown runs (at +5)
     HitboxWidth,  // movss xmm0, [rax+0x18]: an actor's box width
     UseDelay,     // the call that starts the item use delay after an attack (at +20)
     OwnNametag,   // je that skips your own nametag (its two bytes, per build below)
     Perspective,  // Options::getPerspective (the value read is at +0x43)
+    FovLimit,     // getFov's last clamp: maxss by 5, then the load of 130 (its operand at +12)
     Count
 };
 

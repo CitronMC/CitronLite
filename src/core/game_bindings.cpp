@@ -96,6 +96,7 @@ void Assign(Bindings& out, const char* action, int value) {
     else if (std::strcmp(action, "sneak") == 0) out.sneak = value;
     else if (std::strcmp(action, "sprint") == 0) out.sprint = value;
     else if (std::strcmp(action, "inventory") == 0) out.inventory = value;
+    else if (std::strcmp(action, "chat") == 0) out.chat = value;
     else if (std::strcmp(action, "drop") == 0) out.drop = value;
     else if (std::strncmp(action, "hotbar.", 7) == 0) {
         const int slot = std::atoi(action + 7) - 1;

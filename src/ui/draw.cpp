@@ -20,7 +20,7 @@ namespace {
 
 float g_fk = 1.f;
 float g_dt = 0.f;
-unsigned long long g_frame = 0;
+unsigned long long g_frame = 0, g_frames[2] = {};
 unsigned g_accent = tok::kLime;
 bool g_lightAccent = true;
 bool g_interactive = true;
@@ -711,6 +711,64 @@ bool RangeSlider(const char* id, const R& row, const char* label, float labelW, 
     return lo != lo0 || hi != hi0;
 }
 
+namespace {
+void StackHead(const R& row, const char* label, const std::string& value, const char* unit, bool hot) {
+    const float cy = row.y + 11.f;
+    TextMid(Face::Regular, 12.5f, row.x, cy, Hex(hot ? tok::kText : tok::kLabel), label);
+    const float unitW = unit && *unit ? TextW(Face::Regular, 11.5f, unit) : 0.f;
+    if (unitW > 0.f) TextMidR(Face::Regular, 11.5f, row.x1(), cy, Hex(tok::kSub), unit);
+    TextMidR(Face::MonoMedium, 11.f, row.x1() - unitW, cy, Hex(tok::kText), value.c_str());
+}
+}  // namespace
+
+bool StackSlider(const char* id, const R& row, const char* label, float& v, float mn, float mx, float step, const char* unit) {
+    const float before = v;
+    const R strip{row.x, row.y + 19.f, row.w, 18.f};
+    const R track{strip.x + 7.f, strip.cy() - 2.f, strip.w - 14.f, 4.f};
+    const Hit h = Item(id, strip);
+    if (h.hovered || h.held) Cursor(ImGuiMouseCursor_ResizeEW);
+    if (h.held && mx > mn) v = SnapValue(mn + DragFraction(h, track) * (mx - mn), mn, mx, step);
+    const bool hot = h.hovered || h.held;
+    StackHead(row, label, SettingNumber(v), unit, hot);
+    const float f = GlideFraction(Id(id, 8), mx > mn ? (v - mn) / (mx - mn) : 0.f, h.held && mx > mn, h.held ? DragFraction(h, track) : 0.f);
+    Track(track, 0.f, f, hot);
+    Thumb(id, track.x + track.w * f, track.cy(), hot);
+    return v != before;
+}
+
+bool StackRange(const char* id, const R& row, const char* label, float& lo, float& hi, float mn, float mx, float step, const char* unit) {
+    const float lo0 = lo, hi0 = hi;
+    const R strip{row.x, row.y + 19.f, row.w, 18.f};
+    const R track{strip.x + 7.f, strip.cy() - 2.f, strip.w - 14.f, 4.f};
+    const Hit h = Item(id, strip);
+    if (h.hovered || h.held) Cursor(ImGuiMouseCursor_ResizeEW);
+    static int knob = 0;
+    if (h.held && mx > mn) {
+        const float f = DragFraction(h, track);
+        if (h.activated) {
+            const float flo = (lo - mn) / (mx - mn), fhi = (hi - mn) / (mx - mn);
+            knob = fabsf(f - flo) < fabsf(f - fhi) ? 0 : (fabsf(f - flo) > fabsf(f - fhi) ? 1 : (f < flo ? 0 : 1));
+        }
+        const float nv = SnapValue(mn + f * (mx - mn), mn, mx, step);
+        if (knob == 0) lo = std::min(nv, hi);
+        else hi = std::max(nv, lo);
+    }
+    const bool hot = h.hovered || h.held;
+    StackHead(row, label, SettingNumber(lo) + " - " + SettingNumber(hi), unit, hot);
+    const float vlo = mx > mn ? std::clamp((lo - mn) / (mx - mn), 0.f, 1.f) : 0.f;
+    const float vhi = mx > mn ? std::clamp((hi - mn) / (mx - mn), 0.f, 1.f) : 0.f;
+    const float drag = h.held ? DragFraction(h, track) : 0.f;
+    const float flo = GlideFraction(Id(id, 8), vlo, h.held && knob == 0 && mx > mn, std::min(drag, vhi));
+    const float fhi = GlideFraction(Id(id, 9), vhi, h.held && knob == 1 && mx > mn, std::max(drag, vlo));
+    Track(track, flo, fhi, hot);
+    char k0[128], k1[128];
+    std::snprintf(k0, sizeof k0, "%s#k0", id);
+    std::snprintf(k1, sizeof k1, "%s#k1", id);
+    Thumb(k0, track.x + track.w * flo, track.cy(), hot && (!h.held || knob == 0));
+    Thumb(k1, track.x + track.w * fhi, track.cy(), hot && (!h.held || knob == 1));
+    return lo != lo0 || hi != hi0;
+}
+
 // Choices.
 namespace {
 constexpr float kSegH = 26.f, kSegPadX = 11.f, kSegGap = 2.f;
@@ -920,6 +978,9 @@ void ScrollBarEnd(const ScrollBarState& s) {
 }
 
 // Colour.
+// The targets meet in the middle of each gap and stand as tall as the row, so there is nothing to miss
+// between two colours, and a colour is taken as the button goes down: a small target is easy to slide
+// off before the release.
 bool Swatches(const char* id, float x1, float cy, const unsigned* colours, int n, unsigned& value, float d) {
     const float gap = 8.f;
     float x = x1 - (float)n * d - (float)(n - 1) * gap;
@@ -928,9 +989,9 @@ bool Swatches(const char* id, float x1, float cy, const unsigned* colours, int n
         char sid[128];
         std::snprintf(sid, sizeof sid, "%s#%d", id, i);
         const float cx = x + d * 0.5f;
-        const Hit h = Item(sid, R{x - 2.f, cy - d * 0.5f - 2.f, d + 4.f, d + 4.f});
+        const Hit h = Item(sid, R{x - gap * 0.5f, cy - 15.f, d + gap, 30.f});
         PointerOnHover(h);
-        if (h.clicked && value != colours[i]) {
+        if (h.activated && value != colours[i]) {
             value = colours[i];
             changed = true;
         }
@@ -1033,13 +1094,13 @@ bool ColourPicker(const char* id, float x, float y, float w, unsigned& rgb) {
     return changed;
 }
 
-void BeginFrame(ImDrawList* dl, float scale, float fontScale, unsigned accent) {
+void BeginFrame(ImDrawList* dl, float scale, float fontScale, unsigned accent, int surface) {
     g_dl = dl;
     g_s = scale;
     g_fk = fontScale > 0.f ? scale / fontScale : 1.f;
     g_now = ImGui::GetTime();
     g_dt = std::clamp(ImGui::GetIO().DeltaTime, 0.f, 0.5f);
-    ++g_frame;
+    g_frame = ++g_frames[surface];
     g_accent = accent ? accent : tok::kLime;
     g_lightAccent = Luminance(g_accent) > 0.45f;
     g_cursor = ImGuiMouseCursor_Arrow;

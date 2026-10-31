@@ -47,8 +47,8 @@ std::vector<int> Parse(const char* text) {
 }
 
 const char* const kNames[] = {"GameCore", "Camera", "HurtTime", "Looking", "Reach", "ReachWall",
-                              "HotbarWheel", "AirAccel", "JumpDelay", "HitboxWidth", "UseDelay", "OwnNametag",
-                              "Perspective"};
+                              "SelectSlot", "AirAccel", "JumpDelay", "HitboxWidth", "UseDelay", "OwnNametag",
+                              "Perspective", "FovLimit"};
 static_assert(sizeof(kNames) / sizeof(kNames[0]) == (size_t)Site::Count, "a site without a name here");
 
 void Wild(Build b, Site s, std::initializer_list<int> offsets) {
@@ -100,7 +100,7 @@ int main() {
         Wild(b, Site::JumpDelay, {5, 6});
         Wild(b, Site::UseDelay, {20, 21});
         Wild(b, Site::OwnNametag, {0, 1});
-        Wild(b, Site::HotbarWheel, {7});
+        Wild(b, Site::FovLimit, {4, 5, 6, 7, 12, 13, 14, 15});
     }
     Wild(Build::V1_26_52, Site::Reach, {0, 1, 4, 6, 7, 8, 9});
     Wild(Build::V1_26_60, Site::Reach, {8, 9, 10, 11, 18, 19, 20, 21});

@@ -10,6 +10,8 @@
 #include "citron/updater.h"
 #include "citron/version.h"
 #include "draw.h"
+#include "ingame.h"
+#include "rows.h"
 #include "imgui_internal.h"
 #include <windows.h>
 #include <shellapi.h>
@@ -31,18 +33,15 @@ constexpr float kNameRowH = 34.f;
 constexpr float kCardPad = 18.f, kCardHeadH = 42.f, kSwitchRowH = 42.f, kCfgRowH = 46.f;
 constexpr int kModuleTabs = 4;
 
-// Settings: two columns over the page's 528. Configs is as tall as the two cards beside it and the
-// gutter between them, so the lower cards start on one line.
-constexpr float kAppearanceH = 80.f, kClientH = kCardHeadH + 5.f * kSwitchRowH + 6.f, kLowerH = 166.f;
-constexpr float kConfigsH = kAppearanceH + kGap + kClientH;
-static_assert(kConfigsH + kGap + kLowerH == kPanelH - kTopBarH - kPad);
+// Settings: three rows of two cards over the page's 528, so every card lines up with the one beside it.
+constexpr float kTopRowH = 80.f, kMiddleRowH = kCardHeadH + 5.f * kSwitchRowH + 6.f, kLowerRowH = 166.f;
+static_assert(kTopRowH + kGap + kMiddleRowH + kGap + kLowerRowH == kPanelH - kTopBarH - kPad);
 
 struct PanelState {
     std::string selected[kModuleTabs];    // the open module of each module tab
     float listSaved[kModuleTabs] = {};    // where each tab's list was left
     int filter = 0;                       // the list: all, on, bound
     std::vector<std::string> sticky;      // rows that stopped matching the filter while you looked
-    int clickerSide = 0;                  // Auto Clicker's card: left, right
     float listScroll = 0.f, listTarget = 0.f;
     float detailScroll = 0.f, detailTarget = 0.f;
     float cfgScroll = 0.f, cfgTarget = 0.f;
@@ -116,33 +115,6 @@ std::string ImGuiKeyLabel(ImGuiKey k) {
     case ImGuiKey_KeypadAdd: return "NumAdd";
     default: return "";
     }
-}
-
-// Auto Clicker is two modules behind one row: the left side and the hidden right side, picked in its
-// card. The row is lit while either side is on, and the card's header works the side that is picked.
-bool IsClicker(const ModuleDef& d) { return d.key == "clicker"; }
-
-const ModuleDef& SideDef(const AppState& s, const ModuleDef& d) {
-    if (IsClicker(d) && ps.clickerSide == 1)
-        if (const ModuleDef* right = s.Def("rightclicker")) return *right;
-    return d;
-}
-
-bool StateOn(const AppState& s, const std::string& key) {
-    const ModuleState* st = s.St(key);
-    return st && st->on;
-}
-
-bool RowOn(const AppState& s, const ModuleDef& d) { return StateOn(s, d.key) || (IsClicker(d) && StateOn(s, "rightclicker")); }
-
-// The key a row shows: the picked side's, else the other side's.
-std::string RowKey(const AppState& s, const ModuleDef& d) {
-    const ModuleState* st = s.St(SideDef(s, d).key);
-    if (st && !st->key.empty()) return st->key;
-    if (IsClicker(d))
-        for (const char* key : {"clicker", "rightclicker"})
-            if (const ModuleState* side = s.St(key); side && !side->key.empty()) return side->key;
-    return {};
 }
 
 bool Matches(const AppState& s, const ModuleDef& d, int filter) {
@@ -285,11 +257,7 @@ void DrawList(AppState& s, const R& col, float enter) {
         PointerOnHover(hl);
         const bool on = RowOn(s, m);
         if (hl.clicked && m.hasToggle) {
-            if (IsClicker(m) && on) {
-                s.St("clicker")->on = s.St("rightclicker")->on = false;
-            } else if (ModuleState* st = s.St(SideDef(s, m).key)) {
-                st->on = !st->on;
-            }
+            ToggleRow(s, m);
             if (ps.filter != 0) ps.sticky.push_back(m.key);
         }
         std::snprintf(id, sizeof id, "row:%s", m.key.c_str());
@@ -363,7 +331,7 @@ void DrawModuleSettings(AppState& s, const ModuleDef& shown, const ModuleDef& d,
         static const std::vector<std::string> kSides = {"Left", "Right"};
         const bool lit[2] = {StateOn(s, "clicker"), StateOn(s, "rightclicker")};
         TextMid(Face::Regular, 13.f, row.x, row.cy(), Hex(tok::kLabel), "Side");
-        Segmented("clicker-side", row.x1(), row.cy(), kSides, ps.clickerSide, lit);
+        Segmented("clicker-side", row.x1(), row.cy(), kSides, g_clickerSide, lit);
         y += kSetRowH;
     }
     for (const SliderDef& sl : d.sliders) {
@@ -485,7 +453,7 @@ std::string Ago(long long when) {
 
 void DrawAppearance(AppState& s, const R& card) {
     const float y = CardHead(card, "Appearance");
-    const float x = card.x + kCardPad, w = card.w - 2.f * kCardPad, cy = y + 11.f, d = 15.f;
+    const float x = card.x + kCardPad, w = card.w - 2.f * kCardPad, cy = y + 11.f, d = 18.f;
     TextMid(Face::Regular, 13.f, x, cy, Hex(tok::kLabel), "Accent");
     // the presets, then one that stands for any colour
     const R custom{x + w - d, cy - d * 0.5f, d, d};
@@ -493,7 +461,7 @@ void DrawAppearance(AppState& s, const R& card) {
     if (Swatches("accent", custom.x - 8.f, cy, kSwatches, 7, accent, d)) s.accent = accent == tok::kLime ? 0u : accent;
     bool preset = false;
     for (unsigned c : kSwatches) preset |= c == accent;
-    const Hit h = Item("accent:custom", custom.Inset(-2.f));
+    const Hit h = Item("accent:custom", R{custom.x - 4.f, cy - 15.f, d + 8.f, 30.f});
     PointerOnHover(h);
     if (h.clicked) {
         ps.pickerOpen = true;
@@ -529,6 +497,17 @@ void DrawAccentPicker(AppState& s) {
     const R chip{card.x1() - 14.f - 28.f, card.y1() - 21.f - 7.f, 28.f, 14.f};
     Fill(chip, Hex(rgb), 4.f);
     PopAlpha();
+}
+
+void DrawInGame(AppState& s, const R& card) {
+    const float y = CardHead(card, "In Game");
+    const float x = card.x + kCardPad, w = card.w - 2.f * kCardPad, cy = y + 11.f, colW = (w - 24.f) * 0.5f;
+    ModuleState* gui = s.St("clickgui");
+    ModuleState* notes = s.St("notifications");
+    TextMid(Face::Regular, 13.f, x, cy, Hex(tok::kLabel), "Click GUI");
+    if (gui && BindButton("set:gui", x + colW, cy, gui->key, s.listening == "clickgui").clicked && s.listening.empty()) s.listening = "clickgui";
+    TextMid(Face::Regular, 13.f, x + colW + 24.f, cy, Hex(tok::kLabel), "Notifications");
+    if (notes) Switch("set:notes", R{x + w - 30.f, cy - 8.5f, 30.f, 17.f}, notes->on);
 }
 
 void DrawClient(AppState& s, const R& card) {
@@ -642,7 +621,7 @@ void App::Expand(const std::string& key) {
     SetTab(s, d->cat);
     ps.selected[(int)d->cat] = shown;
     ps.revealSelected = true;
-    if (key == "rightclicker") ps.clickerSide = 1;
+    if (key == "rightclicker") g_clickerSide = 1;
 }
 
 void App::DrawConfigs(const R& card) {
@@ -752,12 +731,14 @@ void App::DrawConfigs(const R& card) {
 }
 
 void App::DrawSettings(const R& page) {
-    const float colW = (page.w - kGap) * 0.5f, rightX = page.x + colW + kGap, lowY = page.y + kConfigsH + kGap;
-    DrawAppearance(s, R{page.x, page.y, colW, kAppearanceH});
-    DrawClient(s, R{page.x, page.y + kAppearanceH + kGap, colW, kClientH});
-    DrawSelfDestruct(s, R{page.x, lowY, colW, kLowerH});
-    DrawConfigs(R{rightX, page.y, colW, kConfigsH});
-    DrawAbout(R{rightX, lowY, colW, kLowerH});
+    const float colW = (page.w - kGap) * 0.5f, rightX = page.x + colW + kGap;
+    const float midY = page.y + kTopRowH + kGap, lowY = midY + kMiddleRowH + kGap;
+    DrawAppearance(s, R{page.x, page.y, colW, kTopRowH});
+    DrawInGame(s, R{rightX, page.y, colW, kTopRowH});
+    DrawClient(s, R{page.x, midY, colW, kMiddleRowH});
+    DrawConfigs(R{rightX, midY, colW, kMiddleRowH});
+    DrawSelfDestruct(s, R{page.x, lowY, colW, kLowerRowH});
+    DrawAbout(R{rightX, lowY, colW, kLowerRowH});
 }
 
 // The game, once it has been found; nothing while Minecraft is not running. Returns where it starts.
@@ -878,6 +859,19 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
         }
     }
 
+    if (previewGui) {
+        const R view{0.f, 0.f, io.DisplaySize.x / in.scale, io.DisplaySize.y / in.scale};
+        Fill(view, Hex(0x5a7388));
+        DrawClickGui(s, view, 1.f);
+        const unsigned long long now = GetTickCount64();
+        const std::vector<Toast> sample = {{"Aim Assist", "On", true, now - 600}, {"Reach", "Off", false, now - 600}, {"Steve", "Added", true, now - 600}};
+        DrawToasts(sample, view, now);
+        ImGui::SetMouseCursor(FrameCursor());
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+        return;
+    }
+
     ps.wheelTaken = false;
     ps.tip.clear();
     const R panel{0.f, 0.f, kPanelW, kPanelH};
@@ -915,6 +909,28 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
 
     if (ImGui::IsMouseClicked(0) && !ImGui::IsAnyItemHovered() && IsDragHandle(io.MousePos.x / g_s, io.MousePos.y / g_s)) out.wantDrag = true;
     EndFrameEditor();
+    ImGui::SetMouseCursor(FrameCursor());
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+void App::OverlayFrame(const FrameInput& in) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+    ImGui::Begin("##citronlite-overlay", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+                     ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav);
+    BeginFrame(ImGui::GetWindowDrawList(), in.scale, in.fontScale, s.accent, 1);
+    SetIconTexture(in.icons);
+    SetInteractive(gui == Gui::Open);
+    const R view{0.f, 0.f, io.DisplaySize.x / in.scale, io.DisplaySize.y / in.scale};
+    const unsigned long long now = GetTickCount64();
+    if (gui != Gui::Closed) DrawClickGui(s, view, EaseOutT((float)(now - guiAt) / 160.f));
+    DrawToasts(toasts, view, now);
     ImGui::SetMouseCursor(FrameCursor());
     ImGui::End();
     ImGui::PopStyleVar(2);

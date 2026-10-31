@@ -81,6 +81,10 @@ inline bool InstallCaptureR8Hook(const Proc& p, CaveHook& h, uintptr_t match, in
 // scaled value itself. 1.0 changes nothing.
 bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, float initial);
 
+// At the entry of PlayerInventory::selectSlot(this, slot, flag): while the byte at the slot is set, a
+// step of one slot either way, round the ends of the bar too, returns false and changes nothing.
+bool InstallSlotGuardHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN);
+
 // Puts the site back and frees the cave once no thread is inside it.
 void RemoveHook(const Proc& p, CaveHook& h);
 

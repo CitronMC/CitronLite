@@ -1,0 +1,163 @@
+// The guard on selectSlot, as machine code: the real cave goes into a stand-in function in another
+// process, with selectSlot's own first instructions, and the stand-in is called with every step.
+//   slot_guard_tests        starts itself as the stand-in, then tests it
+#include "citron/engine.h"
+
+#include <windows.h>
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+namespace {
+
+// What the two processes share, in a named mapping.
+struct Shared {
+    uint64_t entry;          // the stand-in's address in its process
+    volatile LONG ready;
+    volatile LONG ask;       // 1: run `slot`, 0 when answered
+    int from;                // the slot held before the call
+    int slot;
+    int result;              // what the stand-in returned
+    int held;                // what its inventory holds after the call
+    volatile LONG stop;
+};
+
+constexpr wchar_t kMapName[] = L"Local\\CitronLiteSlotGuardTest";
+
+// push rbp; push r15; push r14; push r13; then the slot taken: mov [rcx+0x10], edx; mov eax, 1;
+// and back through the same pops. The first seven bytes are what the guard takes the place of.
+const uint8_t kStandIn[] = {
+    0x55, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55,   // push rbp, r15, r14, r13
+    0x89, 0x51, 0x10,                           // mov [rcx+0x10], edx
+    0xB8, 0x01, 0x00, 0x00, 0x00,               // mov eax, 1
+    0x41, 0x5D, 0x41, 0x5E, 0x41, 0x5F, 0x5D,   // pop r13, r14, r15, rbp
+    0xC3,                                       // ret
+};
+
+using SelectSlot = int (*)(void* inventory, int slot, int flag);
+
+int Child() {
+    HANDLE map = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, kMapName);
+    if (!map) return 2;
+    auto* s = static_cast<Shared*>(MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Shared)));
+    if (!s) return 2;
+    // near the image, as the game's code is, so a cave can be reached by a rel32 jump
+    uint8_t* code = nullptr;
+    const uintptr_t self = (uintptr_t)GetModuleHandleW(nullptr);
+    for (uintptr_t at = (self + 0x10000000) & ~0xFFFFull; at < self + 0x70000000 && !code; at += 0x100000)
+        code = static_cast<uint8_t*>(VirtualAlloc((void*)at, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+    if (!code) return 3;
+    std::memcpy(code, kStandIn, sizeof kStandIn);
+    FlushInstructionCache(GetCurrentProcess(), code, sizeof kStandIn);
+    s->entry = (uint64_t)code;
+    uint8_t inventory[0x20] = {};
+    int* held = reinterpret_cast<int*>(inventory + 0x10);
+    InterlockedExchange(&s->ready, 1);
+    while (!s->stop) {
+        if (s->ask != 1) {
+            Sleep(0);
+            continue;
+        }
+        *held = s->from;
+        s->result = reinterpret_cast<SelectSlot>(code)(inventory, s->slot, 0);
+        s->held = *held;
+        InterlockedExchange(&s->ask, 0);
+    }
+    return 0;
+}
+
+int g_failed = 0;
+
+void Check(bool ok, const std::string& what) {
+    std::printf("%-58s %s\n", what.c_str(), ok ? "ok" : "FAILED");
+    g_failed += !ok;
+}
+
+struct Call { int result, held; };
+
+Call Ask(Shared* s, int slot, int from = 4) {
+    s->from = from;
+    s->slot = slot;
+    InterlockedExchange(&s->ask, 1);
+    while (s->ask == 1) Sleep(0);
+    return {s->result, s->held};
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "--stand-in") == 0) return Child();
+
+    HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(Shared), kMapName);
+    auto* s = static_cast<Shared*>(MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Shared)));
+    std::memset(s, 0, sizeof *s);
+
+    char exe[MAX_PATH] = {};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    std::string cmd = std::string("\"") + exe + "\" --stand-in";
+    STARTUPINFOA si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        std::printf("could not start the stand-in\n");
+        return 1;
+    }
+    for (int i = 0; i < 2000 && !s->ready; ++i) Sleep(1);
+    Check(s->ready != 0, "the stand-in is up");
+
+    using namespace citron::engine;
+    Proc proc;
+    proc.h = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_QUERY_INFORMATION, FALSE, pi.dwProcessId);
+    proc.pid = pi.dwProcessId;
+    proc.base = reinterpret_cast<uint8_t*>(s->entry);
+    proc.size = sizeof kStandIn;
+    Check(proc.h != nullptr, "opened it");
+
+    Call c = Ask(s, 5);
+    Check(c.result == 1 && c.held == 5, "before the guard a step goes through");
+
+    CaveHook hook;
+    const bool in = InstallSlotGuardHook(proc, hook, s->entry, 7);
+    Check(in, "the guard goes in");
+    c = Ask(s, 5);
+    Check(c.result == 1 && c.held == 5, "off, a step goes through");
+    c = Ask(s, 7);
+    Check(c.result == 1 && c.held == 7, "off, a jump goes through");
+
+    const uint8_t on = 1, off = 0;
+    Check(Write(proc, hook.slot, on), "the byte is set");
+    for (int slot : {3, 5}) {   // the stand-in holds slot 4 before each call
+        c = Ask(s, slot);
+        Check(c.result == 0 && c.held == 4, "on, a step of one to slot " + std::to_string(slot) + " is refused");
+    }
+    for (int slot : {0, 1, 2, 4, 6, 7, 8}) {
+        c = Ask(s, slot);
+        Check(c.result == 1 && c.held == slot, "on, slot " + std::to_string(slot) + " from 4 goes through");
+    }
+    c = Ask(s, 8, 0);
+    Check(c.result == 0 && c.held == 0, "on, a step round the end, 0 to 8, is refused");
+    c = Ask(s, 0, 8);
+    Check(c.result == 0 && c.held == 8, "on, a step round the end, 8 to 0, is refused");
+    Check(Write(proc, hook.slot, off), "the byte is cleared");
+    c = Ask(s, 5);
+    Check(c.result == 1 && c.held == 5, "off again, a step goes through");
+
+    RemoveHook(proc, hook);
+    Check(!hook.installed, "the guard comes out");
+    uint8_t back[sizeof kStandIn] = {};
+    Check(Read(proc, s->entry, back, sizeof back) && std::memcmp(back, kStandIn, sizeof back) == 0, "the code is as it was");
+    c = Ask(s, 3);
+    Check(c.result == 1 && c.held == 3, "after it a step goes through");
+
+    InterlockedExchange(&s->stop, 1);
+    WaitForSingleObject(pi.hProcess, 3000);
+    TerminateProcess(pi.hProcess, 0);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (g_failed) {
+        std::printf("%d checks failed\n", g_failed);
+        return 1;
+    }
+    std::printf("slot guard tests passed\n");
+    return 0;
+}

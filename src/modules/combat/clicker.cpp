@@ -56,7 +56,7 @@ void Backend::Impl::ClickerTick(const Modules& m) {
     const ModuleSnapshot* c = Mod(m, "clicker");
     const ModuleSnapshot* r = Mod(m, "rightclicker");
     const bool left = c && c->on, right = r && r->on;
-    const bool focused = GameFocused() && throwing.stage == 0;
+    const bool focused = GameFocused() && throwing.stage == 0 && !guiOpen.load(std::memory_order_relaxed);
     const bool leftGate = left && focused && (!Check(*c, "avoidMenus", true) || CursorHidden());
     const bool rightGate = right && focused && CursorHidden();
 
