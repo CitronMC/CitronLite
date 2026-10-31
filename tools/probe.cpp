@@ -7,6 +7,7 @@
 #include "citron/engine.h"
 #include "citron/game.h"
 #include "citron/game_bindings.h"
+#include "citron/option_record.h"
 
 #include <windows.h>
 #include <cmath>
@@ -122,6 +123,14 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::printf("ClientInstance 0x%llX\n", (unsigned long long)ci);
+    for (const char* name : {"gfx_gamma", "gfx_field_of_view"}) {
+        uintptr_t record = 0;
+        float value = 0;
+        if (rd.OptionRecord(name, record) && rd.Rd(record + optrec::kValue, value))
+            std::printf("  option %-18s record 0x%llX, value %.3f\n", name, (unsigned long long)record, value);
+        else
+            std::printf("  option %-18s not found\n", name);
+    }
     uintptr_t timer = 0;
     float tps = 0, alpha = 0;
     if (rd.Timer(timer, tps, alpha))

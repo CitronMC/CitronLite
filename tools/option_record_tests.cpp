@@ -4,9 +4,11 @@
 // Minecraft 1.26.52.03, read by a separate process and pasted here unchanged. One is the real option
 // and two are false matches that zoom used to accept (it took the first match and wrote there). The
 // image bounds are that game's module, because a real option's vtable has to point into it.
+#include "citron/bedrock.h"
 #include "citron/option_record.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 namespace {
@@ -51,9 +53,72 @@ struct Edited {
 
 void SetF(uint8_t* raw, size_t at, float v) { std::memcpy(raw + at, &v, 4); }
 
+// The options table in this process, laid out as the game's, read the way the game's is.
+struct FakeOption {
+    uint8_t raw[0x40] = {};
+    uint8_t details[0x240] = {};
+    FakeOption() {
+        const uintptr_t at = (uintptr_t)details;
+        std::memcpy(raw + citron::optrec::kDetails, &at, sizeof at);
+    }
+    // std::string as the game's compiler lays it out: the characters, or a pointer to them, then size and capacity
+    void Name(const char* name) {
+        uint8_t* s = details + citron::optrec::kSaveName;
+        const uint64_t size = std::strlen(name), cap = size < 16 ? 15 : 31;
+        if (size < 16) {
+            std::memcpy(s, name, size);
+        } else {
+            std::memcpy(s, &name, sizeof name);
+        }
+        std::memcpy(s + 0x10, &size, 8);
+        std::memcpy(s + 0x18, &cap, 8);
+    }
+    void StoodInFor(const FakeOption& by) {
+        const uintptr_t at = (uintptr_t)by.raw;
+        std::memcpy(details + citron::optrec::kStandIn, &at, sizeof at);
+    }
+};
+
+void OptionTable() {
+    using namespace citron;
+    static uintptr_t options[optrec::kTable / 8 + optrec::kTableIds] = {};
+    static FakeOption audio, gamma, fov, standIn;
+    audio.Name("audio_main");
+    gamma.Name("gfx_gamma");
+    fov.Name("gfx_field_of_view");
+    standIn.Name("gfx_gamma_override");
+    auto put = [](size_t id, FakeOption& o) { options[optrec::kTable / 8 + id] = (uintptr_t)o.raw; };
+    put(3, audio);
+    put(47, fov);      // ids with holes before them, as the real table has
+    put(50, gamma);
+
+    engine::Proc proc;
+    proc.h = GetCurrentProcess();
+    proc.base = reinterpret_cast<uint8_t*>(options);
+    proc.size = sizeof options;
+    proc.pid = GetCurrentProcessId();
+    bedrock::Reader rd;
+    rd.Attach(proc, (uintptr_t)options, game::Layout{});
+
+    uintptr_t record = 0;
+    Require(rd.OptionIn((uintptr_t)options, "gfx_gamma", record) && record == (uintptr_t)gamma.raw, "a short name was not found");
+    Require(rd.OptionIn((uintptr_t)options, "gfx_field_of_view", record) && record == (uintptr_t)fov.raw, "a long name was not found");
+    Require(!rd.OptionIn((uintptr_t)options, "gfx_gamm", record), "the start of a name was taken for it");
+    Require(!rd.OptionIn((uintptr_t)options, "gfx_gamma2", record), "a longer name was taken for it");
+    Require(!rd.OptionIn((uintptr_t)options, "game_difficulty", record), "an option that is not there was found");
+
+    gamma.StoodInFor(standIn);
+    Require(rd.OptionIn((uintptr_t)options, "gfx_gamma", record) && record == (uintptr_t)standIn.raw, "the option standing in was not followed");
+    put(823, audio);
+    options[optrec::kTable / 8 + 3] = 0;
+    Require(rd.OptionIn((uintptr_t)options, "audio_main", record) && record == (uintptr_t)audio.raw, "the end of the table was not reached");
+}
+
 } // namespace
 
 int main() {
+    OptionTable();
+
     // The three records from the live game.
     float value = 0;
     Require(Looks(kReal, 0x212C54DB030ull, &value), "the real FOV option was rejected");

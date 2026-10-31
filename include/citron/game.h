@@ -47,6 +47,7 @@ struct Layout {
     uintptr_t clientMinecraft;      // ClientInstance -> Minecraft
     uintptr_t minecraftTimer;       // Minecraft -> the simulation's Timer
     uintptr_t clientLocalPlayer;    // ClientInstance -> WeakEntityRef of your player
+    uintptr_t clientOptions;        // ClientInstance -> Options
 
     // Actor
     uintptr_t actorRegistry;        // the entt registry the actor's components live in

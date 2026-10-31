@@ -68,6 +68,11 @@ public:
     bool SelectedSlot(uintptr_t player, int& slot);
     bool HotbarItem(uintptr_t player, int slot, Item& out);
 
+    // The record of one of the game's options, by the name options.txt saves it under: the one its
+    // getter reads, so a value written there is the value the game uses.
+    bool OptionRecord(const char* name, uintptr_t& record);
+    bool OptionIn(uintptr_t options, const char* name, uintptr_t& record);
+
     bool ReadString(uintptr_t at, std::string& out, size_t limit);
     bool Plausible(uintptr_t p) const { return p >= 0x10000ull && p <= 0x7FFFFFFFFFFFull; }
 

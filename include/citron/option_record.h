@@ -1,7 +1,5 @@
-// Telling the game's FOV option record from bytes that merely look like one. The value is found by
-// a short pattern (a default of 60.0 and a step of 0.001) that also matches inside private buffers,
-// so a match only counts when the whole record reads like the option. A pure function over the
-// record's bytes, so the tests can use records read out of a running game.
+// How the game keeps its options, and whether a record still reads like the FOV option. The check is
+// a pure function over the record's bytes, so the tests can use records read out of a running game.
 #pragma once
 #include <cmath>
 #include <cstddef>
@@ -15,6 +13,12 @@ namespace citron::optrec {
 inline constexpr size_t kVTable = 0x00;
 inline constexpr size_t kMin = 0x10, kMax = 0x14, kValue = 0x18, kDefault = 0x1C, kStep = 0x20;
 inline constexpr size_t kBytes = 0x30;   // how much of a record has to be read to judge it
+
+// Options holds a table of option pointers by id, a few more of them each version (0x336 on .52, 0x339
+// on .60). An option's details hold the name options.txt saves it under and, set when another option
+// stands in for it, that option.
+inline constexpr size_t kTable = 0x10, kTableIds = 0x340;
+inline constexpr size_t kDetails = 0x08, kSaveName = 0x188, kStandIn = 0x238;
 
 // `raw` holds the first kBytes of the candidate, read from `record`. A real option's vtable points
 // into Minecraft's own image.

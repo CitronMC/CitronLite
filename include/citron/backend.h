@@ -34,6 +34,7 @@ struct ModuleSnapshot {
 
 class Backend {
 public:
+    struct Impl;
     Backend();
     ~Backend();
     void Init();
@@ -50,7 +51,6 @@ public:
     unsigned long GamePid() const;
 
 private:
-    struct Impl;
     std::unique_ptr<Impl> impl;
 };
 

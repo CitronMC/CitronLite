@@ -1,12 +1,54 @@
 // The caves that decide things, as machine code: each real cave goes into a stand-in function in another
-// process, with the game function's own first instructions, and the stand-in is called every way.
+// process, with the game function's own first instructions, and the stand-in is called every way. The
+// zoom's real tick then runs against it, since that is what decides the hotbar guard's byte.
 //   cave_tests        starts itself as the stand-in, then tests it
+#include "../src/backend/backend_impl.h"
 #include "citron/engine.h"
+#include "citron/option_record.h"
 
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
+
+// What the zoom's tick asks of the rest of the client, answered by the test.
+namespace citron {
+namespace {
+
+bool g_gameFront = true, g_cursorGone = true, g_wheelTaken = false;
+bool g_keyDown[256] = {};
+uint32_t g_keyEdges[256] = {};
+
+}  // namespace
+
+bool PhysKeyDown(int vk) { return vk > 0 && vk < 256 && g_keyDown[vk]; }
+uint32_t PhysKeyEdges(int vk) { return vk > 0 && vk < 256 ? g_keyEdges[vk] : 0u; }
+void SetWheelOwned(bool owned, unsigned long) { g_wheelTaken = owned; }
+int TakeWheelNotches() { return 0; }
+
+bool Backend::Impl::GameFocused() { return g_gameFront; }
+bool Backend::Impl::CursorHidden() const { return g_cursorGone; }
+const ModuleSnapshot* Backend::Impl::Mod(const Modules& m, const char* id) {
+    const auto it = m.find(id);
+    return it == m.end() ? nullptr : &it->second;
+}
+bool Backend::Impl::On(const Modules& m, const char* id) {
+    const ModuleSnapshot* s = Mod(m, id);
+    return s && s->on;
+}
+float Backend::Impl::Num(const ModuleSnapshot& s, const char* key, float def) {
+    const auto it = s.sliders.find(key);
+    return it == s.sliders.end() ? def : it->second;
+}
+bool Backend::Impl::Check(const ModuleSnapshot& s, const char* key, bool def) {
+    const auto it = s.checks.find(key);
+    return it == s.checks.end() ? def : it->second;
+}
+bool Backend::Impl::WritePatch(CodePatch&, uintptr_t, const uint8_t*, int, const uint8_t*) { return false; }
+void Backend::Impl::ClearPatch(CodePatch&) {}
+
+}  // namespace citron
 
 namespace {
 
@@ -14,6 +56,7 @@ namespace {
 struct Shared {
     uint64_t entry;          // the stand-in's address in its process
     uint64_t grab, release;  // the cursor's stand-ins
+    uint64_t record;         // an FOV option for the zoom
     int grabs, releases;     // how many times each has run
     volatile LONG ready;
     volatile LONG ask;       // 1: run `slot`, 2: grab the cursor, 0 when answered
@@ -59,6 +102,11 @@ int Child() {
     std::memcpy(code + 0x40, kGrab, sizeof kGrab);
     std::memcpy(code + 0x80, kRelease, sizeof kRelease);
     FlushInstructionCache(GetCurrentProcess(), code, 0x100);
+    const uint64_t vtable = (uint64_t)code;
+    const float numbers[5] = {30.f, 110.f, 70.f, 60.f, 0.001f};   // min, max, value, default, step
+    std::memcpy(code + 0xC0 + citron::optrec::kVTable, &vtable, sizeof vtable);
+    std::memcpy(code + 0xC0 + citron::optrec::kMin, numbers, sizeof numbers);
+    s->record = (uint64_t)code + 0xC0;
     s->entry = (uint64_t)code;
     s->grab = (uint64_t)code + 0x40;
     s->release = (uint64_t)code + 0x80;
@@ -100,6 +148,90 @@ Call Ask(Shared* s, int slot, int from = 4) {
     InterlockedExchange(&s->ask, 1);
     while (s->ask == 1) Sleep(0);
     return {s->result, s->held};
+}
+
+// The hotbar through a Click GUI and a zoom, the way a player goes, with the real tick deciding the byte.
+void ZoomGuard(const citron::engine::Proc& proc, Shared* s) {
+    using namespace citron;
+    auto z = std::make_unique<Backend::Impl>();
+    z->proc = proc;
+    z->site[(size_t)game::Site::SelectSlot] = s->entry;
+    z->fovAddr = s->record + optrec::kValue;
+    Modules m;
+    ModuleSnapshot& zoom = m["zoom"];
+    zoom.on = true;
+    zoom.bind = 'C';
+    zoom.checks["scroll"] = true;
+
+    auto byte = [&] {
+        uint8_t now = 0xFF;
+        engine::Read(proc, z->slotHook.slot, now);
+        return (int)now;
+    };
+    auto gui = [&](bool open, bool held) {
+        z->guiOpen = open;
+        z->guiHeld = held;
+        z->ZoomTick(m);
+    };
+    const auto turns = [&] { return Ask(s, 5).held == 5; };
+
+    z->ZoomTick(m);
+    Check(z->slotHook.installed && byte() == 0, "with Zoom on the guard is in, and open");
+    Check(turns(), "in play the wheel turns the hotbar");
+
+    gui(true, true);
+    Check(byte() == 1 && !turns(), "the Click GUI open holds the hotbar");
+    gui(false, true);
+    Check(byte() == 1 && !turns(), "and still does while it closes");
+    gui(false, false);
+    Check(byte() == 0, "closed, the byte is clear with Zoom on");
+    Check(turns(), "closed, the wheel turns the hotbar again");
+
+    gui(true, true);
+    g_cursorGone = false;
+    gui(false, false);
+    Check(byte() == 0, "closed onto a game screen, the byte is clear");
+    g_cursorGone = true;
+    z->ZoomTick(m);
+    Check(byte() == 0 && turns(), "and stays clear back in play");
+
+    g_keyDown['C'] = true;
+    z->ZoomTick(m);
+    Check(z->zoomActive && g_wheelTaken && byte() == 1 && !turns(), "zooming, the wheel sizes the zoom and not the hotbar");
+    z->binds.hotbar[4] = '5';
+    g_keyEdges['5'] = 1;
+    z->ZoomTick(m);
+    Check(byte() == 0 && turns(), "a number key still picks its slot");
+    Sleep(170);
+    z->ZoomTick(m);
+    Check(byte() == 1, "and the guard is back a moment later");
+    g_keyDown['C'] = false;
+    z->ZoomTick(m);
+    Check(!g_wheelTaken && byte() == 0 && turns(), "let go, the hotbar turns while the zoom eases out");
+    for (int i = 0; i < 400 && z->zoomActive; ++i) {
+        Sleep(1);
+        z->ZoomTick(m);
+    }
+    Check(!z->zoomActive && byte() == 0, "and when it has ended");
+
+    zoom.checks["scroll"] = false;
+    g_keyDown['C'] = true;
+    z->ZoomTick(m);
+    Check(z->zoomActive && !g_wheelTaken, "with the wheel left out of the zoom it is not taken");
+    g_keyDown['C'] = false;
+    for (int i = 0; i < 400 && z->zoomActive; ++i) {
+        Sleep(1);
+        z->ZoomTick(m);
+    }
+    Check(!z->slotHook.installed, "and the guard comes out");
+
+    zoom.on = false;
+    gui(true, true);
+    Check(z->slotHook.installed && byte() == 1 && !turns(), "with Zoom off the Click GUI still holds the hotbar");
+    gui(false, false);
+    Check(!z->slotHook.installed && turns(), "closed, the guard comes out");
+    uint8_t back[sizeof kStandIn] = {};
+    Check(engine::Read(proc, s->entry, back, sizeof back) && std::memcmp(back, kStandIn, sizeof back) == 0, "and the code is as it was");
 }
 
 }  // namespace
@@ -197,6 +329,8 @@ int main(int argc, char** argv) {
     RemoveHook(proc, cursor);
     uint8_t grabBack[sizeof kGrab] = {};
     Check(Read(proc, s->grab, grabBack, sizeof grabBack) && std::memcmp(grabBack, kGrab, sizeof grabBack) == 0, "its code is as it was");
+
+    ZoomGuard(proc, s);
 
     InterlockedExchange(&s->stop, 1);
     WaitForSingleObject(pi.hProcess, 3000);

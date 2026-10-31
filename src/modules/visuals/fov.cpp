@@ -19,40 +19,23 @@ bool Backend::Impl::FovRecordLooksRight(uintptr_t valueAddr, float* valueOut) co
     return optrec::LooksLikeFovOption(raw, record, (uint64_t)(uintptr_t)proc.base, (uint64_t)proc.size, valueOut);
 }
 
-// The FOV option's value lives in an allocated record, not the image: a slice of memory per pass
-// is searched for its default (60) and step, and a match counts once it is shaped like the record.
-void Backend::Impl::ScanFov() {
-    if (fovAddr || fovScanDone) return;
-    static const std::vector<int> pat = {-1, -1, -1, -1, 0x00, 0x00, 0x70, 0x42, 0x6F, 0x12};
-    std::vector<uint8_t> scratch;
-    engine::DataSlice slice{};
-    for (int budget = 0; budget < 2; ++budget) {
-        if (!engine::NextDataSlice(proc, fovScanCursor, 1u << 20, pat.size(), scratch, slice)) {
-            fovScanDone = true;
-            Log("[fov] the FOV option was not found");
-            return;
-        }
-        if (!slice.data || slice.size < pat.size()) continue;
-        for (size_t i = 0; i + pat.size() <= slice.size; ++i) {
-            bool hit = true;
-            for (size_t k = 0; k < pat.size() && hit; ++k) hit = pat[k] < 0 || slice.data[i + k] == (uint8_t)pat[k];
-            if (!hit || !FovRecordLooksRight(slice.address + i)) continue;
-            fovAddr = slice.address + i;
-            Log("[fov] the FOV option is at 0x%llX", (unsigned long long)fovAddr);
-            return;
-        }
-    }
+// The FOV option's value lives in an allocated record, not the image: the options table leads to it.
+void Backend::Impl::FindFov() {
+    uintptr_t record = 0;
+    if (!rd.OptionRecord("gfx_field_of_view", record) || !FovRecordLooksRight(record + optrec::kValue)) return;
+    fovAddr = record + optrec::kValue;
+    Log("[fov] the FOV option is at 0x%llX", (unsigned long long)fovAddr);
 }
 
 void Backend::Impl::FovTick(const Modules& m) {
     if (!On(m, "zoom") && !On(m, "customfov")) return;
-    if (!fovAddr) {
-        ScanFov();
-        return;
-    }
     const auto now = clock_t_::now();
     if (now < fovNextLook) return;
     fovNextLook = now + std::chrono::milliseconds(500);
+    if (!fovAddr) {
+        FindFov();
+        return;
+    }
     if (FovRecordLooksRight(fovAddr)) {
         fovStaleLooks = 0;
         return;
@@ -62,8 +45,6 @@ void Backend::Impl::FovTick(const Modules& m) {
     Log("[fov] the FOV option moved; searching again");
     fovStaleLooks = 0;
     fovAddr = 0;
-    fovScanCursor = 0;
-    fovScanDone = false;
     fovBoundsRead = false;
     zoomActive = false;
     customFovOn = false;
@@ -152,9 +133,15 @@ void Backend::Impl::ZoomTick(const Modules& m) {
         slotHook = engine::CaveHook{};
         slotsHeld = false;
     }
+    // Asked every tick: nothing here may leave the byte saying what was true before.
+    SetWheelSuppressed(ZoomStep(s, now));
+}
+
+// A tick of the zoom. True while the wheel is sizing it.
+bool Backend::Impl::ZoomStep(const ModuleSnapshot* s, clock_t_::time_point now) {
     if (!s || !s->on || !fovAddr || !InGame()) {
-        if (zoomActive || slotsHeld != guiHeld) RestoreZoom();
-        return;
+        if (zoomActive) RestoreZoom();
+        return false;
     }
     const bool held = s->bind > 0 && PhysKeyDown(s->bind);
     const float configured = std::clamp(Num(*s, "fov", 30.f), 5.f, 110.f);
@@ -163,14 +150,14 @@ void Backend::Impl::ZoomTick(const Modules& m) {
     const float stepDeg = Num(*s, "step", 10.f) * (Check(*s, "invertScroll", false) ? -1.f : 1.f);
 
     if (held && !zoomActive) {
-        if (!FovRecordLooksRight(fovAddr, &zoomPrevFov)) return;
+        if (!FovRecordLooksRight(fovAddr, &zoomPrevFov)) return false;
         zoomCurrentFov = zoomPrevFov;
         zoomScrollAdjust = 0.f;
         zoomActive = true;
         zoomLastTick = now;
         TakeWheelNotches();
     }
-    if (!zoomActive) return;
+    if (!zoomActive) return false;
     // A number key still picks its slot: the guard stands aside for a moment after one.
     for (int i = 0; i < 9; ++i) {
         const uint32_t presses = PhysKeyEdges(binds.hotbar[i]);
@@ -178,7 +165,6 @@ void Backend::Impl::ZoomTick(const Modules& m) {
         hotbarSeen[i] = presses;
     }
     SetWheelOwned(held && wheel, proc.pid);
-    SetWheelSuppressed(held && wheel && now >= slotsFreeAt);
 
     const float dt = std::min(std::chrono::duration<float>(now - zoomLastTick).count(), 0.1f);
     zoomLastTick = now;
@@ -196,9 +182,10 @@ void Backend::Impl::ZoomTick(const Modules& m) {
     }
     if (!held && std::fabs(zoomCurrentFov - zoomPrevFov) < 0.5f) {
         RestoreZoom();
-        return;
+        return false;
     }
     engine::Write(proc, fovAddr, zoomCurrentFov);
+    return held && wheel && now >= slotsFreeAt;
 }
 
 // Your field of view held at a number of your own, past the 30 to 110 the game's slider allows.

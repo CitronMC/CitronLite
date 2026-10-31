@@ -159,7 +159,7 @@ Start the exe with `--debug` (or put a `debug.txt` in `%LOCALAPPDATA%\CitronLite
 
 The client never runs code inside the game. It opens Minecraft's process and works on its memory from outside:
 
-- **Reading.** A pointer walk from one global the game stores at startup leads to the client instance, the game's clock and your player. The entity registry behind your player lists every actor in the world, and positions, boxes, name tags and inventory come from their components.
+- **Reading.** A pointer walk from one global the game stores at startup leads to the client instance, the game's clock, its options and your player. The entity registry behind your player lists every actor in the world, and positions, boxes, name tags and inventory come from their components.
 - **Capturing.** A few small code caves note what the game is working on as it runs: the camera, the block or entity under the crosshair, your hurt time.
 - **Changing.** Some modules write values (the camera for Aim Assist, your velocity for Velocity), some point an instruction at a number of their own (Reach, Custom FOV past 130), some skip one instruction (No Jump Delay).
 

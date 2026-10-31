@@ -119,7 +119,7 @@ int main() {
     Require(b.ownNametagSkip[0] == 0x74 && b.ownNametagSkip[1] == 0xDB, "1.26.60's own nametag je");
     for (const Layout* l : {&a, &b}) {
         const uintptr_t fields[] = {l->coreMinecraftGame, l->gameClientMap, l->clientMinecraftGame, l->clientMinecraft,
-                                    l->minecraftTimer, l->clientLocalPlayer, l->actorRegistry, l->actorEntity,
+                                    l->minecraftTimer, l->clientLocalPlayer, l->clientOptions, l->actorRegistry, l->actorEntity,
                                     l->actorTypeId, l->actorStateVector, l->actorAabb, l->actorRotation,
                                     l->actorNameTag, l->playerSupplies};
         for (uintptr_t f : fields) Require(f != 0 && f < 0x2000 && (f & 7) == 0, "a layout offset looks wrong");

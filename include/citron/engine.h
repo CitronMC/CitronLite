@@ -1,5 +1,5 @@
-// Reading and patching another process: attach, memory reads and writes, pattern parsing, the heap
-// walk and code caves.
+// Reading and patching another process: attach, memory reads and writes, pattern parsing and code
+// caves.
 #pragma once
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -36,20 +36,6 @@ template <class T> bool Write(const Proc& p, uintptr_t a, const T& v) { return W
 std::vector<int> ParsePattern(const char* ida);
 // The whole image, unreadable pages left zero.
 bool ReadModule(const Proc& p, std::vector<uint8_t>& out);
-
-// A walk over the game's private read/write memory, for values that live only in the heap. It
-// hands back one slice a call so a search can share the worker with everything else.
-struct DataSlice {
-    uintptr_t      address = 0;       // where these bytes are in the game
-    const uint8_t* data    = nullptr; // in the caller's scratch, until the next call
-    size_t         size    = 0;       // a match may start anywhere in here
-    size_t         overlap = 0;       // readable bytes past `size`, so a match can cross the seam
-};
-
-// The next slice from `cursor` (start at 0); false once the walk is done. `overlap` is the longest
-// needle minus one.
-bool NextDataSlice(const Proc& p, uintptr_t& cursor, size_t budget, size_t overlap,
-                   std::vector<uint8_t>& scratch, DataSlice& out);
 
 // A code cave: the site jumps to memory of ours, which does its work, runs the instructions it took
 // the place of and jumps back. What it captures is at `slot`, cave + 0x100.

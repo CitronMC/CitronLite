@@ -1,5 +1,6 @@
 #include "citron/bedrock.h"
 #include "citron/log.h"
+#include "citron/option_record.h"
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
@@ -303,6 +304,32 @@ bool Reader::ReadString(uintptr_t at, std::string& out, size_t limit) {
     }
     out = s;
     return true;
+}
+
+bool Reader::OptionRecord(const char* name, uintptr_t& record) {
+    uintptr_t ci = 0, options = 0;
+    return ClientInstance(ci) && Rd(ci + lay_.clientOptions, options) && Plausible(options) && OptionIn(options, name, record);
+}
+
+bool Reader::OptionIn(uintptr_t options, const char* name, uintptr_t& record) {
+    for (size_t id = 0; id < optrec::kTableIds; ++id) {
+        uintptr_t option = 0, details = 0;
+        std::string saved;
+        if (!Rd(options + optrec::kTable + id * 8, option) || !Plausible(option) || !Rd(option + optrec::kDetails, details) ||
+            !Plausible(details) || !ReadString(details + optrec::kSaveName, saved, 64) || saved != name)
+            continue;
+        // the getter's own walk
+        for (int i = 0; i < 8; ++i) {
+            uintptr_t standIn = 0;
+            if (!Rd(option + optrec::kDetails, details) || !Plausible(details) || !Rd(details + optrec::kStandIn, standIn) ||
+                !Plausible(standIn))
+                break;
+            option = standIn;
+        }
+        record = option;
+        return true;
+    }
+    return false;
 }
 
 bool Reader::TypeId(uintptr_t actor, std::string& out) {

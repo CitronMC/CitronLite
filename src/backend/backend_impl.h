@@ -267,8 +267,6 @@ struct Backend::Impl {
 
     // Zoom and Custom FOV: the FOV option's value
     uintptr_t fovAddr = 0;
-    uintptr_t fovScanCursor = 0;
-    bool fovScanDone = false;
     int fovStaleLooks = 0;
     clock_t_::time_point fovNextLook{};
     bool zoomActive = false;
@@ -286,12 +284,9 @@ struct Backend::Impl {
     uint32_t hotbarSeen[9] = {};
 
     // Fullbright
-    struct GammaScan { int pass = 0; uintptr_t cursor = 0; std::vector<uintptr_t> keys; std::vector<uint8_t> scratch; } gammaScan;
-    std::vector<std::pair<uintptr_t, uintptr_t>> gammaCandidates;
-    std::vector<uintptr_t> gammaRecords;
-    std::vector<float> gammaOriginal;
-    bool gammaPinned = false, gammaWasOn = false;
-    int gammaRetries = 0;
+    uintptr_t gammaRecord = 0;
+    float gammaOriginal = 0.f;
+    bool gammaPinned = false;
     clock_t_::time_point gammaNextEnforce{};
 
     // Hitbox
@@ -390,9 +385,10 @@ struct Backend::Impl {
     void FastFallTick(const Modules& m);
     void ReleaseClock();
     void FovTick(const Modules& m);
-    void ScanFov();
+    void FindFov();
     bool FovRecordLooksRight(uintptr_t valueAddr, float* valueOut = nullptr) const;
     void ZoomTick(const Modules& m);
+    bool ZoomStep(const ModuleSnapshot* s, clock_t_::time_point now);
     void RestoreZoom();
     void CustomFovTick(const Modules& m);
     void FovBoundsTick(const Modules& m);
@@ -402,7 +398,6 @@ struct Backend::Impl {
     void SetWheelSuppressed(bool on);
     void FullbrightTick(const Modules& m);
     bool GammaRecordLooksRight(uintptr_t record, float& value, float& fallback) const;
-    void GammaScanStep();
     void RestoreGamma();
     void NametagTick(const Modules& m);
     void WindowFeaturesTick(const Modules& m);

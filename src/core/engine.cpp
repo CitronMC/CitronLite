@@ -182,49 +182,6 @@ bool ReadModule(const Proc& p, std::vector<uint8_t>& out) {
     return any;
 }
 
-bool NextDataSlice(const Proc& p, uintptr_t& cursor, size_t budget, size_t overlap,
-                   std::vector<uint8_t>& scratch, DataSlice& out) {
-    out = {};
-    constexpr uintptr_t kUserEnd = 0x7FFFFFFF0000ull;
-    // Committed read/write private pages, regions up to 256 MiB. Mapped views are never read: on a
-    // D3D12 game they include memory the graphics driver maps for the GPU, and reading that from
-    // another process crashes the game. The options and everything else searched for live in the
-    // private heap.
-    constexpr size_t kMaxRegion = 256u << 20;
-    if (!p.h || !budget) return false;
-
-    MEMORY_BASIC_INFORMATION mbi{};
-    while (cursor < kUserEnd && VirtualQueryEx(p.h, (LPCVOID)cursor, &mbi, sizeof(mbi))) {
-        const uintptr_t base = (uintptr_t)mbi.BaseAddress;
-        const uintptr_t end  = base + mbi.RegionSize;
-        if (end <= cursor) break;
-        if (mbi.State != MEM_COMMIT || mbi.Protect != PAGE_READWRITE ||
-            mbi.Type != MEM_PRIVATE || mbi.RegionSize > kMaxRegion) {
-            cursor = end;
-            continue;
-        }
-        const uintptr_t from = cursor > base ? cursor : base;
-        size_t take = (size_t)(end - from);
-        if (take > budget) take = budget;
-        size_t want = take + overlap;
-        if (want > (size_t)(end - from)) want = (size_t)(end - from);
-        scratch.resize(want);
-        SIZE_T got = 0;
-        if (!ReadProcessMemory(p.h, (LPCVOID)from, scratch.data(), want, &got) || !got) {
-            cursor = end;   // freed while walking
-            continue;
-        }
-        cursor = from + take;   // the whole slice, even after a short read
-        out.address = from;
-        out.data    = scratch.data();
-        out.size    = (size_t)got > take ? take : (size_t)got;
-        out.overlap = (size_t)got - out.size;
-        return true;
-    }
-    cursor = kUserEnd;
-    return false;
-}
-
 // Code caves. The first one is found by walking the memory map down from the site; each later one
 // is placed 64 KB below the last, which is almost always free and one query away.
 static HANDLE    g_caveProc = nullptr;
