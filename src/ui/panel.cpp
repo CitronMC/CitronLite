@@ -184,7 +184,7 @@ float App::DrawCard(ImDrawList* dl, const ModuleDef& d, ModuleState& st, float x
 
     float right = card.x1() - 16.f;
     if (d.hasToggle) {
-        const R sw{right - 34.f, card.y + 23.f, 34.f, 18.f};
+        const R sw{right - kSwitchW, card.y + 23.f, kSwitchW, kSwitchH};
         std::snprintf(id, sizeof id, "m:%s:sw", d.key.c_str());
         const Hit hs = Item(id, sw);
         Pointer(hs);
@@ -404,7 +404,7 @@ float App::DrawClientCard(ImDrawList* dl, float x0, float y, float w) {
         if (toggle && st) {
             char sid[48];
             std::snprintf(sid, sizeof sid, "%s:sw", id);
-            const R sw{right - 34.f, cy + 3.f, 34.f, 18.f};
+            const R sw{right - kSwitchW, cy + 3.f, kSwitchW, kSwitchH};
             const Hit hs = Item(sid, sw);
             Pointer(hs);
             if (hs.clicked) st->on = !st->on;
@@ -518,10 +518,7 @@ float App::DrawConfigsCard(ImDrawList* dl, float x0, float y, float w, float max
         }
     }
     PopClip();
-    if (maxScroll > 0.f) {
-        const float trackH = listH - 8.f, thumbH = std::max(24.f, trackH * listH / natural);
-        Fill(dl, R{x0 + w - 8.f, listTop + 4.f + (trackH - thumbH) * (cfgScroll / maxScroll), 3.f, thumbH}, White(0.14f), 1.5f);
-    }
+    ScrollBar(dl, "cfg:scroll", x0 + w - 8.f, listTop + 4.f, listH - 8.f, listH, natural, cfgScroll, cfgScrollTarget);
     // the footer: files
     const float fy = listTop + listH + 12.f;
     const float wImp = TextButtonWidth("Import"), wExp = TextButtonWidth("Export"), wDir = TextButtonWidth("Open folder");
@@ -623,19 +620,20 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav);
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    // An open editor owns the keyboard; a bind being captured takes the next key or button.
+    // An open editor owns the keyboard; a bind being captured takes the next key or button. A left
+    // click is never a bind: it cancels, and the key stays as it was.
     ProcessEditor(io);
     if (!s.listening.empty() && !Editing()) {
         ModuleState* st = s.St(s.listening);
-        std::string label;
-        bool done = false;
-        static const char* const kMouse[5] = {"LMB", "RMB", "MMB", "Mouse4", "Mouse5"};
-        for (int b = 0; b < 5 && !done; ++b)
+        std::string label = st ? st->key : std::string();
+        bool done = ImGui::IsMouseClicked(0);
+        static const char* const kMouse[5] = {"", "RMB", "MMB", "Mouse4", "Mouse5"};
+        for (int b = 1; b < 5 && !done; ++b)
             if (ImGui::IsMouseClicked(b)) {
                 label = kMouse[b];
                 done = true;
-                g_interactive = false;
             }
+        if (done) g_interactive = false;
         for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END && !done; ++k) {
             if (!ImGui::IsKeyPressed((ImGuiKey)k, false)) continue;
             if (k == ImGuiKey_Escape) {
@@ -643,8 +641,10 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
                 done = true;
                 break;
             }
-            label = ImGuiKeyLabel((ImGuiKey)k);
-            if (!label.empty()) done = true;
+            const std::string name = ImGuiKeyLabel((ImGuiKey)k);
+            if (name.empty()) continue;
+            label = name;
+            done = true;
         }
         if (done) {
             if (st) st->key = label;
@@ -694,12 +694,7 @@ void App::DrawPanel(const FrameInput& in, FrameOutput& out) {
     PopClip();
     g_alpha = 1.f;
     contentHeight = total;
-    const float maxScroll = std::max(0.f, total - area.h);
-    if (maxScroll > 0.f) {
-        const float trackH = area.h - 8.f, thumbH = std::max(24.f, trackH * area.h / total);
-        Fill(dl, R{area.x1() - 8.f, area.y + 4.f + (trackH - thumbH) * (std::min(scrollY, maxScroll) / maxScroll), 3.f, thumbH},
-             White(0.14f), 1.5f);
-    }
+    ScrollBar(dl, "scroll", area.x1() - 11.f, area.y + 4.f, area.h - 8.f, area.h, total, scrollY, scrollTarget);
     if (ImGui::IsMouseClicked(0) && !ImGui::IsAnyItemHovered() && IsDragHandle(io.MousePos.x / g_s, io.MousePos.y / g_s))
         out.wantDrag = true;
     EndFrameEditor();

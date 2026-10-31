@@ -10,10 +10,11 @@
 namespace citron::ui {
 
 constexpr float kPanelW = 860.f, kPanelH = 580.f;
+constexpr float kSwitchW = 30.f, kSwitchH = 18.f;
 
 // colours
 constexpr unsigned kText = 0xe8eaf0, kMuted = 0x6a7080, kLabel = 0xb8bcc8, kBindText = 0x8a90a0;
-constexpr unsigned kPanelBg = 0x111318, kCardBg = 0x171a21, kDanger = 0xff6b7a, kWarn = 0xfbbf24;
+constexpr unsigned kPanelBg = 0x111318, kCardBg = 0x171a21, kDanger = 0xff6b7a, kWarn = 0xfbbf24, kKnobOff = 0x8a90a0;
 constexpr unsigned kDefaultAccent = 0xc8f135;
 extern const unsigned kSwatches[6];
 
@@ -85,13 +86,14 @@ bool TakeCommit(EditKind kind, ImGuiID target, std::string& text);
 void EndFrameEditor();
 
 // widgets
-void Knob(ImDrawList* dl, float cx, float cy, float rad, float blur, float alpha, bool rim);
+void Knob(ImDrawList* dl, float cx, float cy, float rad, float blur, float alpha);
 void DrawSwitch(ImDrawList* dl, const R& r, bool on, const char* animKey);
 bool SwitchRow(ImDrawList* dl, const char* id, const R& r, const char* label, bool& on);
 float BindButtonWidth(const std::string& label);
 Hit BindButton(ImDrawList* dl, const char* id, const R& r, const std::string& label, bool capturing);
 Hit TextButton(ImDrawList* dl, const char* id, const R& r, const char* label, bool primary);
 float TextButtonWidth(const char* label);
+void ScrollBar(ImDrawList* dl, const char* id, float x, float y, float h, float view, float total, float& pos, float& target);
 std::string NumberText(float v, float step);
 void SliderUI(ImDrawList* dl, const char* id, const R& r, const char* label, float& v, float mn, float mx, float step,
               const char* unit);

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Draw the Citron Lite mark and everything made from it.
+"""Make everything that shows the Citron Lite mark from its master, assets/logo/mark.svg.
 
     python tools/make_logo.py
 
 Writes:
-    assets/logo/mark.svg              the slice, one colour
-    assets/logo/mark.png              the slice in lime, 512 px
+    assets/logo/mark.png              the mark in lime, 512 px
     assets/logo/wordmark-dark.png     mark and name for dark backgrounds
     assets/logo/wordmark-light.png    mark and name for light backgrounds
     assets/citron-lite.ico            the app icon, 16 to 256 px
     include/citron/logo_data.h        the white mask the panel tints with the accent
 
-Needs Pillow. The wordmarks use Albert Sans Bold from assets/fonts.
+All of it on transparency. Needs Pillow and numpy; the wordmarks use Albert Sans Bold from assets/fonts.
 """
-import math
 import os
+import re
 import sys
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,37 +25,38 @@ LIME = (200, 241, 53)
 INK = (17, 19, 24)
 PAPER = (232, 234, 240)
 
-# Proportions of the slice, as fractions of its radius.
-RIND_IN = 0.88
-FLESH = 0.79
-SPOKE = 0.075
-CORE = 0.13
-SEGMENTS = 8
+
+def load_mark():
+    """Each path of the master as its outlines, in the 0 to 100 box. A path's later outlines are holes."""
+    with open(os.path.join(ROOT, "assets", "logo", "mark.svg"), encoding="utf-8") as f:
+        text = f.read()
+    parts = []
+    for d in re.findall(r'\bd="([^"]*)"', text):
+        outlines = []
+        for sub in re.findall(r"M[^MZ]*", d):
+            nums = [float(v) for v in re.findall(r"-?\d+\.?\d*", sub)]
+            outlines.append(list(zip(nums[0::2], nums[1::2])))
+        parts.append(outlines)
+    return parts
 
 
-def slice_mask(size):
-    """The slice as an antialiased alpha mask: drawn four times larger, then reduced."""
-    big = size * 4
-    m = Image.new("L", (big, big), 0)
-    d = ImageDraw.Draw(m)
-    c = big / 2.0
-    r = big / 2.0 - big * 0.02
+MARK = load_mark()
 
-    def disc(radius, fill):
-        d.ellipse([c - radius, c - radius, c + radius, c + radius], fill=fill)
 
-    disc(r, 255)
-    disc(r * RIND_IN, 0)
-    disc(r * FLESH, 255)
-    w = r * SPOKE
-    for k in range(SEGMENTS):
-        a = math.pi / SEGMENTS + k * 2 * math.pi / SEGMENTS
-        dx, dy = math.cos(a), math.sin(a)
-        nx, ny = -dy * w / 2, dx * w / 2
-        x1, y1 = c + dx * r * FLESH * 1.02, c + dy * r * FLESH * 1.02
-        d.polygon([(c + nx, c + ny), (x1 + nx, y1 + ny), (x1 - nx, y1 - ny), (c - nx, c - ny)], fill=0)
-    disc(r * CORE, 0)
-    return m.resize((size, size), Image.LANCZOS)
+def mark_mask(size, inset=0.0):
+    """The mark as an antialiased alpha mask, drawn large and reduced. `inset` is a margin as a fraction."""
+    ss = 8 if size >= 128 else 16
+    big = size * ss
+    span = big * (1.0 - 2.0 * inset)
+    off = big * inset
+    all_parts = np.zeros((big, big), dtype=np.uint8)
+    for outlines in MARK:
+        m = Image.new("L", (big, big), 0)
+        d = ImageDraw.Draw(m)
+        for i, outline in enumerate(outlines):
+            d.polygon([(x / 100.0 * span + off, y / 100.0 * span + off) for x, y in outline], fill=255 if i == 0 else 0)
+        all_parts = np.maximum(all_parts, np.asarray(m))
+    return Image.fromarray(all_parts).resize((size, size), Image.LANCZOS)
 
 
 def coloured(mask, rgb):
@@ -64,32 +65,10 @@ def coloured(mask, rgb):
     return img
 
 
-def svg():
-    # The same geometry in a 100 x 100 box, the gaps cut with a mask.
-    c, r = 50.0, 48.0
-    spokes = []
-    for k in range(SEGMENTS):
-        a = math.degrees(math.pi / SEGMENTS + k * 2 * math.pi / SEGMENTS)
-        spokes.append(
-            '<rect x="%.3f" y="%.3f" width="%.3f" height="%.3f" transform="rotate(%.3f %.1f %.1f)"/>'
-            % (c, c - r * SPOKE / 2, r * FLESH * 1.02, r * SPOKE, a, c, c))
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">\n'
-        '  <mask id="cut">\n'
-        '    <rect width="100" height="100" fill="white"/>\n'
-        '    <circle cx="50" cy="50" r="%.3f" fill="black"/>\n'
-        '    <circle cx="50" cy="50" r="%.3f" fill="white"/>\n'
-        '    <g fill="black">%s</g>\n'
-        '    <circle cx="50" cy="50" r="%.3f" fill="black"/>\n'
-        '  </mask>\n'
-        '  <circle cx="50" cy="50" r="%.1f" fill="#C8F135" mask="url(#cut)"/>\n'
-        '</svg>\n' % (r * RIND_IN, r * FLESH, "".join(spokes), r * CORE, r))
-
-
 def wordmark(text_rgb, sub_rgb, height=160):
-    font = ImageFont.truetype(os.path.join(ROOT, "assets", "fonts", "AlbertSans-Bold.ttf"), int(height * 0.62))
-    mark = coloured(slice_mask(height), LIME)
-    gap = int(height * 0.28)
+    font = ImageFont.truetype(os.path.join(ROOT, "assets", "fonts", "AlbertSans-Bold.ttf"), int(height * 0.6))
+    mark = coloured(mark_mask(height), LIME)
+    gap = int(height * 0.24)
     w1 = font.getlength("Citron ")
     w2 = font.getlength("Lite")
     width = height + gap + int(w1 + w2) + int(height * 0.1)
@@ -97,7 +76,7 @@ def wordmark(text_rgb, sub_rgb, height=160):
     img.alpha_composite(mark, (0, 0))
     d = ImageDraw.Draw(img)
     asc, desc = font.getmetrics()
-    y = (height - (asc + desc)) / 2 + height * 0.02
+    y = (height - (asc + desc)) / 2 + height * 0.08
     d.text((height + gap, y), "Citron ", font=font, fill=text_rgb + (255,))
     d.text((height + gap + w1, y), "Lite", font=font, fill=sub_rgb + (255,))
     return img
@@ -105,16 +84,7 @@ def wordmark(text_rgb, sub_rgb, height=160):
 
 def icon():
     sizes = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
-    frames = []
-    for s in sizes:
-        big = s * 4
-        tile = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-        d = ImageDraw.Draw(tile)
-        d.rounded_rectangle([0, 0, big - 1, big - 1], radius=int(big * 0.22), fill=INK + (255,))
-        inner = int(big * 0.74)
-        mark = coloured(slice_mask(inner), LIME)
-        tile.alpha_composite(mark, ((big - inner) // 2, (big - inner) // 2))
-        frames.append(tile.resize((s, s), Image.LANCZOS))
+    frames = [coloured(mark_mask(s, 0.02), LIME) for s in sizes]
     path = os.path.join(ROOT, "assets", "citron-lite.ico")
     frames[-1].save(path, sizes=[(s, s) for s in sizes], append_images=frames[:-1])
     return path
@@ -122,15 +92,10 @@ def icon():
 
 def logo_data():
     size = 128
-    mask = slice_mask(size)
+    px = mark_mask(size).tobytes()
     rows = []
-    px = mask.tobytes()
     for y in range(size):
-        line = []
-        for x in range(size):
-            a = px[y * size + x]
-            line.append("0xFF,0xFF,0xFF,0x%02X," % a)
-        rows.append("    " + "".join(line))
+        rows.append("    " + "".join("0xFF,0xFF,0xFF,0x%02X," % px[y * size + x] for x in range(size)))
     text = [
         "// Generated by tools/make_logo.py: the Citron Lite mark as a white mask, tinted when drawn.",
         "#pragma once",
@@ -147,10 +112,7 @@ def logo_data():
 
 def main():
     out = os.path.join(ROOT, "assets", "logo")
-    os.makedirs(out, exist_ok=True)
-    with open(os.path.join(out, "mark.svg"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(svg())
-    coloured(slice_mask(512), LIME).save(os.path.join(out, "mark.png"))
+    coloured(mark_mask(512), LIME).save(os.path.join(out, "mark.png"))
     wordmark(PAPER, (138, 144, 160)).save(os.path.join(out, "wordmark-dark.png"))
     wordmark(INK, (106, 112, 128)).save(os.path.join(out, "wordmark-light.png"))
     print(icon())

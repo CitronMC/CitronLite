@@ -123,9 +123,6 @@ void BuildModel(AppState& s) {
     def("friends", "Friends", "Leaves the players on your list alone", Cat::Combat)
         .Names()
         .Check("middleClick", "Middle Click Adds", true);
-    def("reachspoofer", "Reach Spoofer", "Rewrites the reach display of Flarial or oderso", Cat::Combat)
-        .Slider("cap", "Display Cap", 0, 10, 0.01f, " blocks", 3.0f)
-        .Slider("multiplier", "Display Multiplier", 0, 500, 5, "%", 100);
 
     // Movement
     def("velocity", "Velocity", "Scales the knockback you take", Cat::Movement)

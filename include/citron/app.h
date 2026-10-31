@@ -35,6 +35,7 @@ public:
     void SelectTab(Cat c);
     void Expand(const std::string& key);
     void Preview(const std::string& key, const std::string& bind);   // on, with this bind
+    void SaveTo(const std::string& path) const;
 
 private:
     AppState s;

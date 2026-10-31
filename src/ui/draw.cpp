@@ -35,7 +35,7 @@ ImU32 White(float a) { return Hex(0xffffff, a); }
 ImU32 Black(float a) { return Hex(0x000000, a); }
 ImU32 Accent(float a) { return Hex(g_accent, a); }
 bool LightAccent() { return g_lightAccent; }
-// Text and knob rims on an accent surface: dark on a light accent, light on a dark one.
+// Text and knobs on an accent surface: dark on a light accent, light on a dark one.
 ImU32 OnAccent() { return g_lightAccent ? Hex(kPanelBg) : Hex(kText); }
 
 // Colours mix in premultiplied space, the way a browser transitions them.
@@ -464,22 +464,24 @@ void EndFrameEditor() {
 }
 
 // Widgets.
-void Knob(ImDrawList* dl, float cx, float cy, float rad, float blur, float alpha, bool rim) {
+void Knob(ImDrawList* dl, float cx, float cy, float rad, float blur, float alpha) {
     ShadowCircle(dl, cx, cy, rad, 1.f, blur, alpha);
     Circle(dl, cx, cy, rad, White(1.f));
-    if (rim) dl->AddCircle(ImVec2(Dv(cx), Dv(cy)), Dv(rad - 0.75f), Hex(kPanelBg), 0, Dv(1.5f));
 }
 
-// 34 x 18 pill; the knob slides over .15 s.
+// The knob slides over .15 s, grey on the dark track and dark on the lit one. It is placed from the
+// pill's own pixels, so it stays centred at any scale.
 void DrawSwitch(ImDrawList* dl, const R& r, bool on, const char* animKey) {
     const float k = Animate(ImHashStr(animKey), on ? 1.f : 0.f, 0.15f);
-    Fill(dl, r, Mix(White(0.1f), Accent(), k), 9.f);
-    Knob(dl, r.x + 9.f + 16.f * k, r.y + 9.f, 7.f, 3.f, 0.3f, g_lightAccent && k > 0.5f);
+    Fill(dl, r, Mix(White(0.1f), Accent(), k), r.h * 0.5f);
+    const ImVec2 a = Min(r), b = Max(r);
+    const float end = (b.y - a.y) * 0.5f;
+    dl->AddCircleFilled(ImVec2(a.x + end + (b.x - a.x - 2.f * end) * k, a.y + end), end - Dv(2.f), Mix(Hex(kKnobOff), OnAccent(), k));
 }
 
 bool SwitchRow(ImDrawList* dl, const char* id, const R& r, const char* label, bool& on) {
     TextAt(dl, F(400, 13.f), r.x, r.y + LM(13.f).asc, Hex(kLabel), label);
-    const R sw{r.x1() - 34.f, r.y, 34.f, 18.f};
+    const R sw{r.x1() - kSwitchW, r.y, kSwitchW, kSwitchH};
     const Hit h = Item(id, sw);
     Pointer(h);
     if (h.clicked) on = !on;
@@ -513,6 +515,21 @@ Hit TextButton(ImDrawList* dl, const char* id, const R& r, const char* label, bo
     return h;
 }
 float TextButtonWidth(const char* label) { return 24.f + TextW(F(600, 12.f), label); }
+
+// x, y and h are the track, and view of total is showing. Taken anywhere on the track the thumb comes
+// to the pointer; taken by the thumb it keeps its grip.
+void ScrollBar(ImDrawList* dl, const char* id, float x, float y, float h, float view, float total, float& pos, float& target) {
+    const float maxScroll = total - view;
+    if (maxScroll <= 0.f) return;
+    const float thumbH = std::max(24.f, h * view / total), travel = h - thumbH;
+    const float thumbY = y + travel * std::min(pos, maxScroll) / maxScroll;
+    const Hit hit = Item(id, R{x - 4.f, y, 11.f, h});
+    static float grip = 0.f;
+    const float my = ImGui::GetIO().MousePos.y / g_s;
+    if (hit.activated) grip = my >= thumbY && my < thumbY + thumbH ? my - thumbY : thumbH * 0.5f;
+    if (hit.active && travel > 0.f) pos = target = std::clamp((my - grip - y) / travel, 0.f, 1.f) * maxScroll;
+    Fill(dl, R{x, thumbY, 3.f, thumbH}, White(hit.active ? 0.3f : hit.hovered ? 0.22f : 0.14f), 1.5f);
+}
 
 namespace {
 int Decimals(float step) {
@@ -557,6 +574,11 @@ void Track(ImDrawList* dl, const R& r, float f0, float f1) {
     Fill(dl, track, White(0.08f), 2.f);
     if (f1 > f0) Fill(dl, R{track.x + track.w * f0, track.y, track.w * (f1 - f0), 4.f}, Accent(), 2.f);
 }
+// Where a knob sits on the track, on the track's own pixels.
+float KnobY(const R& r) {
+    const R track{r.x, r.y + 32.f, r.w, 4.f};
+    return (Min(track).y + Max(track).y) * 0.5f / g_s;
+}
 }  // namespace
 
 std::string NumberText(float v, float step) {
@@ -579,7 +601,7 @@ void SliderUI(ImDrawList* dl, const char* id, const R& r, const char* label, flo
     if (ValueText(dl, vid, r.x1(), r.y, NumberText(v, step) + unit, NumberText(v, step), typed)) v = SnapValue(typed, mn, mx, step);
     const float frac = std::clamp(mx > mn ? (v - mn) / (mx - mn) : 0.f, 0.f, 1.f);
     Track(dl, r, 0.f, frac);
-    Knob(dl, r.x + r.w * frac, r.y + 34.f, 6.f, 4.f, 0.4f, g_lightAccent);
+    Knob(dl, r.x + r.w * frac, KnobY(r), 6.f, 4.f, 0.4f);
 }
 
 // Two knobs on one track; a press takes the nearer one.
@@ -613,8 +635,8 @@ void RangeUI(ImDrawList* dl, const char* id, const R& r, const char* label, floa
     const float flo = mx > mn ? std::clamp((lo - mn) / (mx - mn), 0.f, 1.f) : 0.f;
     const float fhi = mx > mn ? std::clamp((hi - mn) / (mx - mn), 0.f, 1.f) : 0.f;
     Track(dl, r, flo, fhi);
-    Knob(dl, r.x + r.w * flo, r.y + 34.f, 6.f, 4.f, 0.4f, g_lightAccent);
-    Knob(dl, r.x + r.w * fhi, r.y + 34.f, 6.f, 4.f, 0.4f, g_lightAccent);
+    Knob(dl, r.x + r.w * flo, KnobY(r), 6.f, 4.f, 0.4f);
+    Knob(dl, r.x + r.w * fhi, KnobY(r), 6.f, 4.f, 0.4f);
 }
 
 float SegmentedWidth(const std::vector<std::string>& options) {

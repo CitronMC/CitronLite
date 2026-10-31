@@ -155,7 +155,7 @@ struct Backend::Impl {
     ULONGLONG focusAt = 0;
 
     // caves
-    engine::CaveHook camHook, renderHook, hurtHook, lookHook, perspHook, hitboxHook, airHook, spoofHook;
+    engine::CaveHook camHook, renderHook, hurtHook, lookHook, perspHook, hitboxHook, airHook;
 
     // the crosshair
     bool lookBlock = false, lookEntity = false, lookKnown = false;
@@ -280,11 +280,6 @@ struct Backend::Impl {
     bool hitboxStealth = false;
     uintptr_t hitboxVtable = 0;
 
-    // Reach Spoofer
-    float spoofMultWrote = -1.f, spoofCapWrote = -1.f;
-    uintptr_t spoofModuleBase = 0;
-    clock_t_::time_point spoofNextScan{};
-
     // Air Accel
     float airWrote = -1.f;
 
@@ -357,8 +352,6 @@ struct Backend::Impl {
     void HitboxTick(const Modules& m);
     bool HitboxInstall(uintptr_t target);
     void RestoreHitboxSizes();
-    void ReachSpooferTick(const Modules& m);
-    void RemoveReachSpoofer();
     void ThrowTick(const Modules& m);
     void FinishThrow(bool goBack);
     void NoUseDelayTick(const Modules& m);

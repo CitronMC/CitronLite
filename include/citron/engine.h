@@ -37,16 +37,6 @@ std::vector<int> ParsePattern(const char* ida);
 // The whole image, unreadable pages left zero.
 bool ReadModule(const Proc& p, std::vector<uint8_t>& out);
 
-// The other modules loaded in the game: Reach Spoofer patches another client's DLL, not the game.
-struct ModuleInfo {
-    std::string name;
-    uintptr_t   base = 0;
-    size_t      size = 0;
-    bool        system = false;   // under the Windows directory, never a target
-};
-std::vector<ModuleInfo> EnumModules(DWORD pid);
-bool ReadRegion(const Proc& p, uintptr_t base, size_t size, std::vector<uint8_t>& out);
-
 // A walk over the game's private read/write memory, for values that live only in the heap. It
 // hands back one slice a call so a search can share the worker with everything else.
 struct DataSlice {
@@ -95,11 +85,6 @@ bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stole
 // Stores a register into a ring of `ringN` pointers (a power of two), for a site that runs for
 // many objects a frame. The write count is at the slot, the ring at slot + 8.
 bool InstallRingHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, uint8_t modrm, int ringN);
-
-// At a store of xmm0: xmm0 = min(xmm0 * mult, cap) first. The multiplier is at the slot, the cap at
-// slot + 4, both live.
-bool InstallXmm0CapHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN,
-                        float mult, float cap);
 
 // Puts the site back and frees the cave once no thread is inside it.
 void RemoveHook(const Proc& p, CaveHook& h);

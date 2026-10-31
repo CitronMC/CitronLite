@@ -43,7 +43,6 @@ Citron Lite supports **Minecraft 1.26.52 and 1.26.60** from the Microsoft Store 
 | Right Clicker | Clicks for you while you hold use. |
 | Teams | Leaves your teammates alone, going by the colour of their name. Auto reads your own colour, or pick one. |
 | Friends | Leaves the players on your list alone. Middle click a player to add or remove them. |
-| Reach Spoofer | Holds the reach shown by Flarial or oderso to a normal number. |
 
 **Movement**
 
@@ -86,7 +85,7 @@ Citron Lite supports **Minecraft 1.26.52 and 1.26.60** from the Microsoft Store 
 
 ## Keys
 
-Click the key button on a card and press any key or mouse button. Escape clears it. Nothing comes with a key already set, except Taskbar Hide on Insert.
+Click the key button on a card and press any key, or any mouse button but the left one. A left click cancels and Escape clears the key. Nothing comes with a key already set, except Taskbar Hide on Insert.
 
 - Most modules switch on and off with their key.
 - Zoom works while its key is held.
@@ -133,6 +132,8 @@ You need MinGW-w64 with GCC 13 or newer ([WinLibs](https://winlibs.com) works we
 ./build_mingw.sh run      # build, then start it
 ```
 
+The tests include a full session through the real window: `tools/ui_tests.cpp` starts the exe at five window scales and drives it with real window messages, so a control that isn't where it is drawn fails there.
+
 `CITRON_LTO=0` skips link-time optimisation for a faster build. CMake works too:
 
 ```bash
@@ -165,6 +166,7 @@ src/modules/     one file per module or group, by tab
 src/ui/          draw.cpp (widgets) and panel.cpp (the window)
 src/app.cpp      state, configs and hotkeys       src/model.cpp  the module catalog
 tools/           tests, the probe, and the scripts that make the logo and embed the fonts
+assets/logo/     mark.svg is the master; tools/make_logo.py makes the icon and the rest from it
 ```
 
 ### A new Minecraft version

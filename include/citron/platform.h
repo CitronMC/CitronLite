@@ -26,7 +26,6 @@ struct Window {
     int  designWidth  = 0;                 // the layout's own size; the window scales it
     int  designHeight = 0;
     float scale = 1.f;                     // window size over design size
-    float appliedDpi = 1.f;                // the monitor scale the size was chosen for
     bool wantClose = false;
 
     // Windows runs its own loop while a border is dragged, so the window draws itself from the

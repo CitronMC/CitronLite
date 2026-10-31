@@ -73,6 +73,8 @@ void App::Preview(const std::string& key, const std::string& bind) {
     }
 }
 
+void App::SaveTo(const std::string& path) const { cfgio::Write(path, s.mods, s.accent); }
+
 void App::Frame(const FrameInput& in, FrameOutput& out) {
     ApplyFriendEdits();
     PollHotkeys();

@@ -270,7 +270,7 @@ void Backend::Impl::ForgetGame() {
     SetSnapTap(0);
     SetWheelOwned(false, 0);
     rd.Detach();
-    camHook = renderHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = spoofHook = engine::CaveHook{};
+    camHook = renderHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = engine::CaveHook{};
     jumpDelay = useDelay = ownNametag = hotbarWheel = CodePatch{};
     reachInstalled = reachKeep = false;
     reachFloats = 0;
@@ -289,7 +289,6 @@ void Backend::Impl::ForgetGame() {
     gammaScan = GammaScan{};
     gammaPinned = gammaWasOn = false;
     gammaRetries = 0;
-    spoofModuleBase = 0;
     ents.clear();
     local = Local{};
     look = Look{};
@@ -329,7 +328,6 @@ void Backend::Impl::RestoreAll() {
         hitboxHook = engine::CaveHook{};
         RestoreHitboxSizes();
     }
-    RemoveReachSpoofer();
     Log("[restore] the game is as it was");
 }
 
@@ -422,7 +420,6 @@ void Backend::Impl::Worker() {
 
         ReachTick(m);
         HitboxTick(m);
-        ReachSpooferTick(m);
         AimAssistTick(m);
         TriggerBotTick(m);
         ClickerTick(m);

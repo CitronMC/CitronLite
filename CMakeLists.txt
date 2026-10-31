@@ -4,6 +4,9 @@ project(CitronLite LANGUAGES CXX RC)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Threads REQUIRED)
+if(MINGW)
+    add_link_options(-static -static-libgcc -static-libstdc++)
+endif()
 
 set(IMGUI third_party/imgui)
 
@@ -16,6 +19,7 @@ add_executable(CitronLite WIN32
     src/logo.cpp
     src/telemetry.cpp
     src/updater.cpp
+    src/ui_script.cpp
     src/ui/draw.cpp
     src/ui/panel.cpp
     src/core/engine.cpp
@@ -31,7 +35,6 @@ add_executable(CitronLite WIN32
     src/modules/combat/clicker.cpp
     src/modules/combat/reach.cpp
     src/modules/combat/hitbox.cpp
-    src/modules/combat/reachspoofer.cpp
     src/modules/combat/throws.cpp
     src/modules/movement/taps.cpp
     src/modules/movement/clock.cpp
@@ -53,9 +56,6 @@ target_compile_definitions(CitronLite PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_ME
 target_link_libraries(CitronLite PRIVATE
     Threads::Threads d3d11 dxgi d3dcompiler dwmapi gdi32 user32 ole32 imm32 comdlg32 shell32 winhttp
     bcrypt version)
-if(MINGW)
-    target_link_options(CitronLite PRIVATE -static -static-libgcc -static-libstdc++)
-endif()
 
 enable_testing()
 function(citron_test name)
@@ -74,3 +74,9 @@ citron_test(game tools/game_tests.cpp src/core/game.cpp)
 target_link_libraries(test_game PRIVATE version)
 citron_test(names tools/names_tests.cpp)
 citron_test(fastfall tools/fastfall_tests.cpp)
+add_executable(test_ui tools/ui_tests.cpp src/config_io.cpp src/model.cpp)
+target_include_directories(test_ui PRIVATE include)
+target_compile_definitions(test_ui PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(test_ui PRIVATE comdlg32 shell32)
+add_dependencies(test_ui CitronLite)
+add_test(NAME ui COMMAND test_ui $<TARGET_FILE:CitronLite>)

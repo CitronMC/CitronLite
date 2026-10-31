@@ -182,42 +182,6 @@ bool ReadModule(const Proc& p, std::vector<uint8_t>& out) {
     return any;
 }
 
-std::vector<ModuleInfo> EnumModules(DWORD pid) {
-    std::vector<ModuleInfo> out;
-    if (!pid) return out;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-    if (snap == INVALID_HANDLE_VALUE) return out;
-
-    wchar_t winDir[MAX_PATH] = {};
-    const UINT winLen = GetWindowsDirectoryW(winDir, MAX_PATH);
-
-    MODULEENTRY32W me = {}; me.dwSize = sizeof(me);
-    for (BOOL ok = Module32FirstW(snap, &me); ok; ok = Module32NextW(snap, &me)) {
-        ModuleInfo mi;
-        for (const wchar_t* c = me.szModule; *c; ++c) mi.name.push_back((char)*c);
-        mi.base = (uintptr_t)me.modBaseAddr;
-        mi.size = me.modBaseSize;
-        if (winLen && winLen < MAX_PATH)
-            mi.system = _wcsnicmp(me.szExePath, winDir, winLen) == 0;
-        out.push_back(std::move(mi));
-    }
-    CloseHandle(snap);
-    return out;
-}
-
-bool ReadRegion(const Proc& p, uintptr_t base, size_t size, std::vector<uint8_t>& out) {
-    if (!p.ok() || !base || !size) return false;
-    out.assign(size, 0);
-    const size_t CH = 4u * 1024 * 1024;
-    bool any = false;
-    for (size_t off = 0; off < size; off += CH) {
-        const size_t n = (size - off < CH) ? (size - off) : CH;
-        SIZE_T got = 0;
-        if (ReadProcessMemory(p.h, (LPCVOID)(base + off), out.data() + off, n, &got) && got) any = true;
-    }
-    return any;
-}
-
 bool NextDataSlice(const Proc& p, uintptr_t& cursor, size_t budget, size_t overlap,
                    std::vector<uint8_t>& scratch, DataSlice& out) {
     out = {};
@@ -286,8 +250,6 @@ void* AllocCaveNear(const Proc& p, uintptr_t nearAddr, size_t size) {
         }
     }
 
-    // From the site itself, not the game's base: another client's DLL can load gigabytes away from
-    // the game, out of a rel32 jump's reach of anything near the base. The walk only goes down.
     auto t0 = std::chrono::steady_clock::now();
     int probes = 0;
     uintptr_t addr = nearAddr & ~0xFFFFull;
@@ -418,60 +380,6 @@ bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stole
     Log("[cave] xmm0-scale installed @ 0x%llX -> cave 0x%llX slot 0x%llX (stole %d, factor %.3f)",
         (unsigned long long)match, (unsigned long long)caveA,
         (unsigned long long)slot, stolenN, initial);
-    return true;
-}
-
-bool InstallXmm0CapHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN,
-                        float mult, float cap) {
-    if (!p.h || stolenN < 5 || stolenN > 16) return false;
-
-    uint8_t orig[16] = {};
-    if (!Read(p, match, orig, stolenN)) return false;
-
-    const size_t CAVE = 0x110;
-    void* cave = AllocCaveNear(p, match, CAVE);
-    if (!cave) { Log("[cave] cap AllocCaveNear failed near 0x%llX", (unsigned long long)match); return false; }
-    const uintptr_t caveA   = (uintptr_t)cave;
-    const uintptr_t slotMul = caveA + 0x100;
-    const uintptr_t slotCap = caveA + 0x104;
-
-    uint8_t buf[0x110] = {};
-    int n = 0;
-    // mulss xmm0, [mult]
-    buf[n++] = 0xF3; buf[n++] = 0x0F; buf[n++] = 0x59; buf[n++] = 0x05;
-    int32_t dMul = (int32_t)(slotMul - (caveA + n + 4)); std::memcpy(buf + n, &dMul, 4); n += 4;
-    // minss xmm0, [cap]
-    buf[n++] = 0xF3; buf[n++] = 0x0F; buf[n++] = 0x5D; buf[n++] = 0x05;
-    int32_t dCap = (int32_t)(slotCap - (caveA + n + 4)); std::memcpy(buf + n, &dCap, 4); n += 4;
-    // the client's own store, then back
-    std::memcpy(buf + n, orig, stolenN); n += stolenN;
-    buf[n++] = 0xE9;
-    int32_t relBack = (int32_t)((match + stolenN) - (caveA + n + 4));
-    std::memcpy(buf + n, &relBack, 4); n += 4;
-    // both numbers are in place before the jump in is
-    std::memcpy(buf + 0x100, &mult, sizeof(mult));
-    std::memcpy(buf + 0x104, &cap,  sizeof(cap));
-
-    SIZE_T put = 0;
-    if (!WriteProcessMemory(p.h, cave, buf, CAVE, &put) || put != CAVE) {
-        VirtualFreeEx(p.h, cave, 0, MEM_RELEASE);
-        Log("[cave] cap write cave body failed"); return false;
-    }
-
-    uint8_t tramp[16]; std::memset(tramp, 0x90, sizeof(tramp));
-    tramp[0] = 0xE9;
-    int32_t relFwd = (int32_t)(caveA - (match + 5));
-    std::memcpy(tramp + 1, &relFwd, 4);
-    if (!WriteProtected(p, match, tramp, stolenN)) {
-        VirtualFreeEx(p.h, cave, 0, MEM_RELEASE);
-        Log("[cave] cap write trampoline failed"); return false;
-    }
-
-    h.match = match; h.cave = caveA; h.slot = slotMul; h.stolen = stolenN;
-    std::memcpy(h.orig, orig, stolenN); h.installed = true;
-    Log("[cave] xmm0-cap installed @ 0x%llX -> cave 0x%llX slot 0x%llX (stole %d, mult %.3f cap %.3f)",
-        (unsigned long long)match, (unsigned long long)caveA,
-        (unsigned long long)slotMul, stolenN, mult, cap);
     return true;
 }
 

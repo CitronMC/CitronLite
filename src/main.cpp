@@ -4,6 +4,7 @@
 #include "citron/log.h"
 #include "citron/logo.h"
 #include "citron/platform.h"
+#include "citron/ui_script.h"
 #include "citron/updater.h"
 #include "backends/imgui_impl_dx11.h"
 #include "backends/imgui_impl_win32.h"
@@ -52,8 +53,11 @@ const char* Arg(const char* name) {
 
 std::string ArgWord(const char* name) {
     const char* v = Arg(name);
+    if (!v) return {};
+    const char stop = *v == '"' ? '"' : ' ';
+    if (*v == '"') ++v;
     std::string out;
-    while (v && *v && *v != ' ' && *v != '"') out += *v++;
+    while (*v && *v != stop) out += *v++;
     return out;
 }
 
@@ -155,7 +159,7 @@ struct Loop {
     App* app = nullptr;
 };
 
-void RenderOnce(platform::Window& w, App& app, bool foreground) {
+void RenderOnce(platform::Window& w, App& app, bool foreground, const std::string& capture = {}) {
     BeginScaledFrame(w);
     FrameInput in;
     in.scale = w.scale > 0.f ? w.scale : 1.f;
@@ -168,6 +172,7 @@ void RenderOnce(platform::Window& w, App& app, bool foreground) {
     const float clear[4] = {0x11 / 255.f, 0x13 / 255.f, 0x18 / 255.f, 1.f};
     platform::BeginRender(w, clear);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    if (!capture.empty()) SaveBackbufferBMP(w, capture.c_str());
     platform::EndRender(w);
     if (out.wantClose) PostQuitMessage(0);
     if (out.wantMinimize) platform::Minimize(w);
@@ -232,7 +237,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     win.onFrame = RenderDuringResize;
 
     // headless captures: --shot=out.bmp [--tab=combat] [--expand=aimassist] [--on=reach,zoom:C]
-    // [--shotframe=N] [--shotscale=2]
+    // [--shotframe=N] [--shotscale=2]; with --script=steps.txt [--dump=state.txt] a session for the
+    // UI tests runs instead
     const std::string tab = ArgWord("--tab=");
     for (const CatInfo& c : kCats)
         if (tab == c.key) app.SelectTab(c.cat);
@@ -248,6 +254,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (shot && shotPath.empty()) shotPath = "citron-lite-shot.bmp";
     const int shotFrame = Arg("--shotframe=") ? std::max(2, std::atoi(Arg("--shotframe="))) : 40;
     int frame = 0;
+    UiScript script;
+    const bool scripted = shot && script.Load(ArgWord("--script="));
+    if (scripted) SetWindowPos(win.hwnd, nullptr, -16000, -16000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     bool restarted = false;
     ULONGLONG nextRestartCheck = 0;
@@ -266,7 +275,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
         // and never waits on the compositor.
         if (minimized) Sleep(60);
         else if (background) Sleep(40);
-        win.vsyncFlush = !background;
+        win.vsyncFlush = !background && !scripted;
 
         if (!win.inSizeMove && std::fabs(win.scale - g_fontScale) > 0.02f) {
             BuildFonts(win.scale);
@@ -274,25 +283,14 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             ImGui_ImplDX11_CreateDeviceObjects();
         }
         if (minimized) continue;
-        if (shot && ++frame == shotFrame) {
-            BeginScaledFrame(win);
-            FrameInput in;
-            in.scale = win.scale;
-            in.fontScale = g_fontScale;
-            in.mark = LogoTex();
-            FrameOutput out;
-            app.Frame(in, out);
-            ImGui::Render();
-            const float clear[4] = {0x11 / 255.f, 0x13 / 255.f, 0x18 / 255.f, 1.f};
-            platform::BeginRender(win, clear);
-            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-            SaveBackbufferBMP(win, shotPath.c_str());
-            platform::EndRender(win);
-            break;
-        }
-        RenderOnce(win, app, !background);
+        std::string capture;
+        if (scripted && !script.Step(win, capture)) break;
+        const bool last = shot && !scripted && ++frame == shotFrame;
+        RenderOnce(win, app, !background, last ? shotPath : capture);
+        if (last) break;
     }
 
+    if (const std::string dump = ArgWord("--dump="); !dump.empty()) app.SaveTo(dump);
     app.Shutdown();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

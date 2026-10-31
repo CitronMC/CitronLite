@@ -114,25 +114,6 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
 
-    // The layout is in design pixels and the window scales it, so the mouse is mapped back before
-    // ImGui sees it; the position a press latches has to be in design pixels too.
-    LPARAM imguiLp = lp;
-    if (w && w->scale > 0.f && w->scale != 1.f) {
-        switch (msg) {
-        case WM_MOUSEMOVE:
-        case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
-        case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
-        case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
-        case WM_XBUTTONDOWN: case WM_XBUTTONUP: case WM_XBUTTONDBLCLK: {
-            int mx = (int)std::lround((float)GET_X_LPARAM(lp) / w->scale);
-            int my = (int)std::lround((float)GET_Y_LPARAM(lp) / w->scale);
-            imguiLp = MAKELPARAM((WORD)(short)mx, (WORD)(short)my);
-            break;
-        }
-        default: break;
-        }
-    }
-
     // Losing focus ends any typing: ImGui's own handler releases the keys but keeps the active item.
     if (msg == WM_KILLFOCUS && g_wndprocCtx && ImGui::GetCurrentContext()) {
         ImGuiContext* prev = ImGui::GetCurrentContext();
@@ -144,7 +125,7 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (g_wndprocCtx && ImGui::GetCurrentContext()) {
         ImGuiContext* prev = ImGui::GetCurrentContext();
         ImGui::SetCurrentContext(g_wndprocCtx);
-        bool handled = ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, imguiLp);
+        bool handled = ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
         ImGui::SetCurrentContext(prev);
         if (handled) return true;
     }
@@ -191,10 +172,8 @@ LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         break;
     case WM_DPICHANGED:
-        // Moved to a monitor with another scale: take the size Windows suggests. Changes that send
-        // no message (a display swap, a new scale setting) are caught by the main loop.
+        // Moved to a monitor with another scale: take the size Windows suggests.
         if (lp) {
-            if (w) w->appliedDpi = (float)LOWORD(wp) / 96.f;
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd, nullptr, r->left, r->top,
                          r->right - r->left, r->bottom - r->top,
@@ -299,7 +278,6 @@ bool Init(Window& w, int width, int height, const wchar_t* title, float cornerRa
     w.width  = (int)std::lround((float)width  * s);
     w.height = (int)std::lround((float)height * s);
     w.scale  = s;
-    w.appliedDpi = s;
 
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     int x = (sw - w.width) / 2, y = (sh - w.height) / 2;
@@ -473,6 +451,9 @@ void Shutdown(Window& w) {
 void BeginDrag(Window& w) {
     ReleaseCapture();
     SendMessageW(w.hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+    // The move loop eats the button's release; without this ImGui holds it down and the next click
+    // is lost.
+    SendMessageW(w.hwnd, WM_LBUTTONUP, 0, 0);
 }
 void Minimize(Window& w) { ShowWindow(w.hwnd, SW_MINIMIZE); }
 void SetWndProcImGuiContext(void* imguiContext) {
