@@ -167,7 +167,7 @@ Every patch is written with the game's threads paused, and all of them come back
 
 The Click GUI and the notifications are a second window, not part of the game: transparent, always on top, composited by Windows. It never takes the focus, and it lets clicks through unless the GUI is open. It only exists on screen while it has something on it, since a window over the game stops the game flipping straight to the display.
 
-The game reads the mouse past anything another program can hold back, so while the GUI is open it skips its own steps: the call that turns the camera and the function that handles clicks, and its cursor grab lets the pointer go instead. They all come back as the GUI closes. On a build where those places cannot be found, the game's chat screen is opened behind the GUI to do the same job.
+The game reads the mouse past anything another program can hold back, so while the GUI is open it skips its own steps: the call that turns the camera, the function that handles clicks and its cursor grab. The game's own release of the pointer runs on its window's thread, through a small cave on the window's callback, because Windows counts the cursor per thread. They all come back as the GUI closes. On a build where those places cannot be found, the game's chat screen is opened behind the GUI to do the same job.
 
 ### Source layout
 

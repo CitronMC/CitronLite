@@ -57,9 +57,13 @@ struct Shared {
     uint64_t entry;          // the stand-in's address in its process
     uint64_t grab, release;  // the cursor's stand-ins
     uint64_t record;         // an FOV option for the zoom
+    uint64_t window, called; // the window callback's stand-in, and what a call to it runs
+    uint64_t note;           // where that call writes
+    uint64_t arg[4];         // the message
+    uint64_t answer;         // what the callback returned
     int grabs, releases;     // how many times each has run
     volatile LONG ready;
-    volatile LONG ask;       // 1: run `slot`, 2: grab the cursor, 0 when answered
+    volatile LONG ask;       // 1: run `slot`, 2: grab the cursor, 3: a message, 0 when answered
     int from;                // the slot held before the call
     int slot;
     int result;              // what the stand-in returned
@@ -84,7 +88,35 @@ const uint8_t kGrab[] = {0x56, 0x48, 0x83, 0xEC, 0x20, 0xFF, 0x41, 0x14, 0x48, 0
 // a count at [rcx+0x18]
 const uint8_t kRelease[] = {0xFF, 0x41, 0x18, 0xC3};
 
+// The window callback: the first five bytes as the game's, then the sum of the message.
+const uint8_t kWindow[] = {
+    0x55, 0x41, 0x57, 0x41, 0x56,   // push rbp, r15, r14
+    0x48, 0x89, 0xC8,               // mov rax, rcx
+    0x48, 0x01, 0xD0,               // add rax, rdx
+    0x4C, 0x01, 0xC0,               // add rax, r8
+    0x4C, 0x01, 0xC8,               // add rax, r9
+    0x41, 0x5E, 0x41, 0x5F, 0x5D,   // pop r14, r15, rbp
+    0xC3,                           // ret
+};
+
+// What the window call runs: counts at [rcx], notes the stack at [rcx+4] as a function finds it on entry,
+// and tramples the registers a call may trample.
+const uint8_t kCalled[] = {
+    0xFF, 0x01,                     // inc dword ptr [rcx]
+    0x48, 0x89, 0xE0,               // mov rax, rsp
+    0x83, 0xE0, 0x0F,               // and eax, 0xF
+    0x89, 0x41, 0x04,               // mov [rcx+4], eax
+    0x31, 0xC9,                     // xor ecx, ecx
+    0x31, 0xD2,                     // xor edx, edx
+    0x4D, 0x31, 0xC0,               // xor r8, r8
+    0x4D, 0x31, 0xC9,               // xor r9, r9
+    0x4D, 0x31, 0xD2,               // xor r10, r10
+    0x4D, 0x31, 0xDB,               // xor r11, r11
+    0xC3,                           // ret
+};
+
 using SelectSlot = int (*)(void* inventory, int slot, int flag);
+using Window = uint64_t (*)(uint64_t, uint64_t, uint64_t, uint64_t);
 using Grab = void (*)(void* self);
 
 int Child() {
@@ -101,12 +133,17 @@ int Child() {
     std::memcpy(code, kStandIn, sizeof kStandIn);
     std::memcpy(code + 0x40, kGrab, sizeof kGrab);
     std::memcpy(code + 0x80, kRelease, sizeof kRelease);
-    FlushInstructionCache(GetCurrentProcess(), code, 0x100);
+    std::memcpy(code + 0x100, kWindow, sizeof kWindow);
+    std::memcpy(code + 0x140, kCalled, sizeof kCalled);
+    FlushInstructionCache(GetCurrentProcess(), code, 0x200);
     const uint64_t vtable = (uint64_t)code;
     const float numbers[5] = {30.f, 110.f, 70.f, 60.f, 0.001f};   // min, max, value, default, step
     std::memcpy(code + 0xC0 + citron::optrec::kVTable, &vtable, sizeof vtable);
     std::memcpy(code + 0xC0 + citron::optrec::kMin, numbers, sizeof numbers);
     s->record = (uint64_t)code + 0xC0;
+    s->window = (uint64_t)code + 0x100;
+    s->called = (uint64_t)code + 0x140;
+    s->note = (uint64_t)code + 0x200;
     s->entry = (uint64_t)code;
     s->grab = (uint64_t)code + 0x40;
     s->release = (uint64_t)code + 0x80;
@@ -118,6 +155,11 @@ int Child() {
             reinterpret_cast<Grab>(code + 0x40)(inventory);
             s->grabs = *reinterpret_cast<int*>(inventory + 0x14);
             s->releases = *reinterpret_cast<int*>(inventory + 0x18);
+            InterlockedExchange(&s->ask, 0);
+            continue;
+        }
+        if (s->ask == 3) {
+            s->answer = reinterpret_cast<Window>(code + 0x100)(s->arg[0], s->arg[1], s->arg[2], s->arg[3]);
             InterlockedExchange(&s->ask, 0);
             continue;
         }
@@ -329,6 +371,39 @@ int main(int argc, char** argv) {
     RemoveHook(proc, cursor);
     uint8_t grabBack[sizeof kGrab] = {};
     Check(Read(proc, s->grab, grabBack, sizeof grabBack) && std::memcmp(grabBack, kGrab, sizeof grabBack) == 0, "its code is as it was");
+
+    // the window call: once, on the window's thread, and the message goes on as it would have
+    auto message = [&] {
+        s->arg[0] = 0x1000;
+        s->arg[1] = 0x200;
+        s->arg[2] = 0x30;
+        s->arg[3] = 0x4;
+        InterlockedExchange(&s->ask, 3);
+        while (s->ask == 3) Sleep(0);
+        return s->answer == 0x1234;
+    };
+    auto calls = [&] {
+        int n = -1;
+        Read(proc, s->note, n);
+        return n;
+    };
+    CaveHook window;
+    Check(InstallWindowCallHook(proc, window, s->window, 5), "the window's cave goes in");
+    Check(message() && calls() == 0, "unasked, a message runs as it did");
+    Check(AskWindowCall(proc, window, s->called, s->note), "a call is asked for");
+    Check(message() && calls() == 1, "the next message runs it and keeps its own arguments");
+    int stack = -1;
+    Read(proc, s->note + 4, stack);
+    Check(stack == 8, "it finds the stack as a function should");
+    uint8_t armed = 0xFF;
+    Read(proc, window.slot, armed);
+    Check(armed == 0, "and the byte is clear");
+    Check(message() && calls() == 1, "the message after does not run it again");
+    Check(AskWindowCall(proc, window, s->called, s->note) && Write(proc, window.slot, off), "a call can be taken back");
+    Check(message() && calls() == 1, "and then does not run");
+    RemoveHook(proc, window);
+    uint8_t windowBack[sizeof kWindow] = {};
+    Check(Read(proc, s->window, windowBack, sizeof windowBack) && std::memcmp(windowBack, kWindow, sizeof windowBack) == 0, "its code is as it was");
 
     ZoomGuard(proc, s);
 

@@ -72,12 +72,18 @@ bool InstallXmm0ScaleHook(const Proc& p, CaveHook& h, uintptr_t match, int stole
 bool InstallSlotGuardHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN);
 
 // At the entry of ClientInstance::grabCursor, and what the byte at the slot makes of each grab. The game
-// asks for one on every tick of play, so a state is met within a tick.
+// asks for one on most ticks of play, and can go quiet for a long while.
 inline constexpr uint8_t kCursorPlain = 0;      // the game's own
 inline constexpr uint8_t kCursorRelease = 1;    // the next one runs `release` instead, on the game's thread, and moves on to free
 inline constexpr uint8_t kCursorFree = 2;       // nothing: the pointer stays free
 inline constexpr uint8_t kCursorGrabAgain = 3;  // the game's own, and back to plain, which says the grab has happened
 bool InstallCursorGuardHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN, uintptr_t release);
+
+// At the entry of the game window's callback: while the byte at the slot is set, the next message runs one
+// function on the window's thread, with one argument, and goes on as it would have. Windows counts the
+// cursor per thread, so the game's cursor calls only work from there.
+bool InstallWindowCallHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN);
+bool AskWindowCall(const Proc& p, const CaveHook& h, uintptr_t function, uintptr_t argument);
 
 // Puts the site back and frees the cave once no thread is inside it.
 void RemoveHook(const Proc& p, CaveHook& h);

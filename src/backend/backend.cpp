@@ -23,6 +23,7 @@ int HookOffset(Site s) {
     case Site::Looking:
     case Site::SelectSlot:
     case Site::GrabCursor:
+    case Site::WindowProc:
     case Site::HitboxWidth: return 0;
     case Site::Perspective: return 0x43;
     case Site::AirAccel: return 1;
@@ -56,6 +57,7 @@ const uint8_t kSkipCall[5] = {0x0F, 0x1F, 0x44, 0x00, 0x00};
 const uint8_t kReturnNothing[3] = {0x31, 0xC0, 0xC3};
 const uint8_t kMouseEntry[3] = {0x55, 0x41, 0x57};
 constexpr int kGrabStolen = 5;   // push rsi; sub rsp, 0x20
+constexpr int kWindowStolen = 5;  // push rbp, r15, r14
 
 }  // namespace
 
@@ -290,10 +292,22 @@ void Backend::Impl::HealGuiSkips() {
     }
 }
 
+// The game asks to grab the pointer on most ticks of play but not on all of them, so the pointer is not left
+// waiting for that: the game's own release runs on its window's thread, on the message posted here.
+void Backend::Impl::LetGoNow() {
+    static const UINT wake = RegisterWindowMessageW(L"CitronLite.Wake");
+    const HWND front = GetForegroundWindow();
+    DWORD pid = 0;
+    GetWindowThreadProcessId(front, &pid);
+    uintptr_t ci = 0;
+    if (pid != proc.pid || !rd.ClientInstance(ci)) return;
+    if (engine::AskWindowCall(proc, windowHook, SiteAt(Site::ReleaseCursor), ci)) PostMessageW(front, wake, 0, 0);
+}
+
 // While the Click GUI is open the game gets none of the mouse. It reads the mouse past anything a hook in
 // another process can hold back, so its own steps are skipped: the call that turns the camera and the
-// function that handles clicks, and its cursor grab lets go instead. Closing, the game grabs first and
-// the camera comes back after: the grab resets the turn's baseline, so the view does not snap.
+// function that handles clicks, and its cursor grab is held. Closing, the game grabs first and the camera
+// comes back after: the grab resets the turn's baseline, so the view does not snap.
 void Backend::Impl::GuiHoldTick(const Modules& m) {
     const auto now = clock_t_::now();
     const ModuleSnapshot* key = Mod(m, "clickgui");
@@ -301,28 +315,30 @@ void Backend::Impl::GuiHoldTick(const Modules& m) {
     // in ahead of time: a cave's first home can take most of a second to find
     if (key && key->bind && grab && release && !cursorHook.installed && now >= nextGuiTry)
         if (!engine::InstallCursorGuardHook(proc, cursorHook, grab, kGrabStolen, release)) nextGuiTry = now + std::chrono::seconds(5);
+    const uintptr_t window = SiteAt(Site::WindowProc);
+    if (key && key->bind && window && !windowHook.installed && now >= nextWindowTry)
+        if (!engine::InstallWindowCallHook(proc, windowHook, window, kWindowStolen)) nextWindowTry = now + std::chrono::seconds(5);
 
     const bool want = guiOpen.load(std::memory_order_relaxed);
     auto setCursor = [&](uint8_t state) { return cursorHook.installed && engine::Write(proc, cursorHook.slot, state); };
-    if (want && guiHeld) {
-        if (guiClosing) {
-            guiClosing = false;
-            setCursor(engine::kCursorRelease);
-        }
-        return;
-    }
     if (want) {
         guiHeld = true;
+        if (guiLetGo && !guiClosing) return;
+        guiClosing = false;
+        // Asked again each tick: the cave may still be on its way in, and a patch is refused while a thread stands on it.
         const uintptr_t turn = SiteAt(Site::TurnCall), mouse = SiteAt(Site::MouseInput);
-        if (cursorHook.installed && turn && mouse && WritePatch(turnSkip, turn + game::LayoutFor(build).turnCallAt, kSkipCall, sizeof kSkipCall, nullptr) &&
-            WritePatch(mouseSkip, mouse, kReturnNothing, sizeof kReturnNothing, kMouseEntry))
-            setCursor(engine::kCursorRelease);
+        if (!cursorHook.installed || !turn || !mouse) return;
+        if (!turnSkip.on && !WritePatch(turnSkip, turn + game::LayoutFor(build).turnCallAt, kSkipCall, sizeof kSkipCall, nullptr)) return;
+        if (!mouseSkip.on && !WritePatch(mouseSkip, mouse, kReturnNothing, sizeof kReturnNothing, kMouseEntry)) return;
+        guiLetGo = setCursor(engine::kCursorRelease);
+        if (guiLetGo) LetGoNow();
         return;
     }
     if (!guiHeld) return;
     if (!guiClosing) {
         guiClosing = true;
         guiCloseBy = now + std::chrono::milliseconds(250);
+        if (windowHook.installed) engine::Write(proc, windowHook.slot, (uint8_t)0);
         setCursor(engine::kCursorGrabAgain);
         return;
     }
@@ -332,7 +348,7 @@ void Backend::Impl::GuiHoldTick(const Modules& m) {
     setCursor(engine::kCursorPlain);
     ClearPatch(mouseSkip);
     ClearPatch(turnSkip);
-    guiHeld = guiClosing = false;
+    guiHeld = guiClosing = guiLetGo = false;
 }
 
 // The game went away: everything it held went with it, so nothing is restored, only forgotten.
@@ -345,9 +361,9 @@ void Backend::Impl::ForgetGame() {
     SetSnapTap(0);
     SetWheelOwned(false, 0);
     rd.Detach();
-    camHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = slotHook = cursorHook = engine::CaveHook{};
+    camHook = hurtHook = lookHook = perspHook = hitboxHook = airHook = slotHook = cursorHook = windowHook = engine::CaveHook{};
     jumpDelay = useDelay = ownNametag = fovLimit = turnSkip = mouseSkip = CodePatch{};
-    guiHeld = guiClosing = false;
+    guiHeld = guiClosing = guiLetGo = false;
     reachInstalled = reachKeep = false;
     reachFloats = 0;
     reachState = 0;
@@ -393,7 +409,7 @@ void Backend::Impl::RestoreAll() {
     RestoreGamma();
     ReachRestore();
     for (CodePatch* p : {&jumpDelay, &useDelay, &ownNametag, &fovLimit, &turnSkip, &mouseSkip}) ClearPatch(*p);
-    for (engine::CaveHook* h : {&camHook, &hurtHook, &lookHook, &perspHook, &airHook, &slotHook, &cursorHook}) {
+    for (engine::CaveHook* h : {&camHook, &hurtHook, &lookHook, &perspHook, &airHook, &slotHook, &cursorHook, &windowHook}) {
         if (h->installed) engine::RemoveHook(proc, *h);
         *h = engine::CaveHook{};
     }

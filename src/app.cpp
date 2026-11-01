@@ -317,7 +317,7 @@ void App::ClickGuiTick() {
         if (CursorShowing()) {
             ClipCursor(nullptr);
             gui = Gui::Open;
-        } else if (now - guiAt > 400) {
+        } else if (now - guiAt > (guiScreen ? 400u : 1000u)) {
             guiAt = now;
             if (++guiScreen == 1) backend.PressChat();
             else if (guiScreen == 2) backend.PressKey(VK_ESCAPE);

@@ -28,6 +28,7 @@ enum class Site : uint8_t {
     MouseInput,   // GameCore::handleMouseInput: clicks and attacks
     GrabCursor,   // ClientInstance::grabCursor: asked for on every tick of play
     ReleaseCursor,  // ClientInstance::releaseCursor
+    WindowProc,   // the game window's callback: every message, on the window's thread
     Count
 };
 

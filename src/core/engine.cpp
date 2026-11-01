@@ -239,6 +239,7 @@ namespace {
 
 constexpr size_t kCaveBytes = 0x110;
 constexpr int kSlotOffset = 0x100;
+constexpr int kCallFunction = 8, kCallArgument = 0x10;   // past the byte, in a window call's slot
 
 // A cave: `head`, then the stolen instructions and the jump back. The slot is at a fixed distance from
 // the cave's start, so `head` can reach it by rip-relative displacement before the cave has an address.
@@ -357,6 +358,34 @@ bool InstallCursorGuardHook(const Proc& p, CaveHook& h, uintptr_t match, int sto
     point(43, 48, kSlotOffset);
     struct { uint64_t state; uint64_t release; } slot{kCursorPlain, release};
     return PlaceCave(p, h, match, stolenN, head, sizeof head, &slot, sizeof slot);
+}
+
+bool InstallWindowCallHook(const Proc& p, CaveHook& h, uintptr_t match, int stolenN) {
+    uint8_t head[49] = {
+        0x80, 0x3D, 0, 0, 0, 0, 0x00,        // cmp byte ptr [slot], 0
+        0x74, 40,                            // je run
+        0xC6, 0x05, 0, 0, 0, 0, 0x00,        // mov byte ptr [slot], 0
+        0x51, 0x52, 0x41, 0x50, 0x41, 0x51,  // push rcx, rdx, r8, r9      the message
+        0x48, 0x83, 0xEC, 0x28,              // sub rsp, 0x28
+        0x48, 0x8B, 0x0D, 0, 0, 0, 0,        // mov rcx, [slot + argument]
+        0xFF, 0x15, 0, 0, 0, 0,              // call [slot + function]
+        0x48, 0x83, 0xC4, 0x28,              // add rsp, 0x28
+        0x41, 0x59, 0x41, 0x58, 0x5A, 0x59,  // pop r9, r8, rdx, rcx
+    };                                       // run: the game's own
+    const auto point = [&](int at, int end, int target) {
+        const int32_t disp = target - end;
+        std::memcpy(head + at, &disp, 4);
+    };
+    point(2, 7, kSlotOffset);
+    point(11, 16, kSlotOffset);
+    point(29, 33, kSlotOffset + kCallArgument);
+    point(35, 39, kSlotOffset + kCallFunction);
+    return PlaceCave(p, h, match, stolenN, head, sizeof head, nullptr, 0);
+}
+
+bool AskWindowCall(const Proc& p, const CaveHook& h, uintptr_t function, uintptr_t argument) {
+    const uint8_t armed = 1;
+    return h.installed && Write(p, h.slot + kCallFunction, function) && Write(p, h.slot + kCallArgument, argument) && Write(p, h.slot, armed);
 }
 
 void RemoveHook(const Proc& p, CaveHook& h) {

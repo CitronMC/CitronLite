@@ -161,7 +161,7 @@ struct Backend::Impl {
     ULONGLONG focusAt = 0;
 
     // caves
-    engine::CaveHook camHook, hurtHook, lookHook, perspHook, hitboxHook, airHook, slotHook, cursorHook;
+    engine::CaveHook camHook, hurtHook, lookHook, perspHook, hitboxHook, airHook, slotHook, cursorHook, windowHook;
 
     // the crosshair
     bool lookBlock = false, lookEntity = false, lookKnown = false;
@@ -191,8 +191,8 @@ struct Backend::Impl {
 
     // the Click GUI: the game's mouse steps, skipped while it is open
     CodePatch turnSkip, mouseSkip;
-    bool guiHeld = false, guiClosing = false;
-    clock_t_::time_point guiCloseBy{}, nextGuiTry{};
+    bool guiHeld = false, guiClosing = false, guiLetGo = false;
+    clock_t_::time_point guiCloseBy{}, nextGuiTry{}, nextWindowTry{};
 
     // Aim Assist
     uintptr_t aimTarget = 0;
@@ -325,6 +325,7 @@ struct Backend::Impl {
     void SetStatus(bool attached, const char* label, std::string detail);
     void RefreshBindings(bool force = false);
     void GuiHoldTick(const Modules& m);
+    void LetGoNow();
     uintptr_t SiteAt(game::Site s) const { return site[(size_t)s]; }
 
     // Shared helpers (backend.cpp).
