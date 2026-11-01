@@ -56,13 +56,7 @@ void Backend::Impl::AimAssistTick(const Modules& m) {
     const float turn = aimHaveYaw ? WrapPi(look.yaw - aimLastYaw) : 0.f;
     aimHaveYaw = true;
     aimLastYaw = look.yaw;
-    {
-        const float memory = std::exp(-dt / 0.04f);
-        aimHand = aimHand * memory + turn;
-        const float decay = std::exp(-dt / 0.035f);
-        aimIntent = aimIntent * decay + turn;
-        if (std::fabs(turn) > 1e-5f) aimIntentAt = now;
-    }
+    aimHand = aimHand * std::exp(-dt / 0.04f) + turn;
 
     if (Check(*s, "onlyLmb", true) && !PhysicalBindingDown(binds.attack)) return stand();
     if (Check(*s, "onlyWeapon", false) && !HoldingWeapon()) return stand();
@@ -74,7 +68,6 @@ void Backend::Impl::AimAssistTick(const Modules& m) {
     const int part = Pick(*s, "aimpart", 0);
     const bool playersOnly = Check(*s, "playersOnly", true);
     const bool horizontalOnly = Check(*s, "horizontalOnly", false);
-    const bool followMouse = Check(*s, "matchDirection", false);
 
     // Whoever is nearest the crosshair across, kept until somebody is clearly better.
     Ent* best = nullptr;
@@ -138,10 +131,6 @@ void Backend::Impl::AimAssistTick(const Modules& m) {
 
     // Close in, a little of their movement swings the heading round: the yaw fades out.
     if (horiz < 0.35f) sy *= horiz / 0.35f;
-    if (followMouse) {
-        const bool turning = now - aimIntentAt < std::chrono::milliseconds(200) && std::fabs(aimIntent) > 0.0005f;
-        if (!turning || (aimIntent > 0.f) != (sy > 0.f)) sy = 0.f;
-    }
     // Turning away from them: the pull is gone over the first three degrees of it.
     if (aimHand != 0.f && (aimHand > 0.f) == (rawErrYaw > 0.f)) {
         const float left = 1.f - std::clamp(std::fabs(aimHand) * kDeg / 3.f, 0.f, 1.f);

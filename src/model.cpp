@@ -99,7 +99,6 @@ void BuildModel(AppState& s) {
         .Check("onlyLmb", "Only While Attacking", true)
         .Check("playersOnly", "Players Only", true)
         .Check("horizontalOnly", "Horizontal Only", false)
-        .Check("matchDirection", "Follow Mouse Direction", false)
         .Check("onlyWeapon", "Only With A Weapon", false);
     def("triggerbot", "Trigger Bot", "Attacks whoever is under your crosshair in reach", Cat::Combat)
         .Range("cps", "CPS", 1, 20, 0.5f, "", 8, 12)

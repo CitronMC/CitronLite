@@ -200,8 +200,7 @@ struct Backend::Impl {
     float aimDriftYaw = 0.f, aimDriftPitch = 0.f;
     float aimLastYaw = 0.f;           // the yaw last seen or written, to measure the hand
     bool aimHaveYaw = false;
-    float aimHand = 0.f, aimIntent = 0.f;   // your own turning: the last 40 ms, and a decaying sum
-    clock_t_::time_point aimHandAt{}, aimIntentAt{};
+    float aimHand = 0.f;              // your own turning, the last 40 ms
     Xrng aimRng;
 
     // Trigger Bot
