@@ -116,9 +116,6 @@ Settings are saved as you change them. **Configs** in Settings keeps as many as 
 
 ## Questions
 
-**Can I get banned?**
-Yes. Any client can get you banned on a server that does not allow it. Read the rules of the server you play on.
-
 **Why does my antivirus complain?**
 Citron Lite reads and changes another program's memory, which is what antivirus software watches for. The code is all here: read it, or build it yourself.
 
