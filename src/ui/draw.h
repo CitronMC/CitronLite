@@ -124,7 +124,7 @@ bool StackSlider(const char* id, const R& row, const char* label, float& v, floa
 bool StackRange(const char* id, const R& row, const char* label, float& lo, float& hi, float mn, float mx, float step, const char* unit);
 bool Segmented(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel, const bool* dots = nullptr);
 float SegmentedWidth(const std::vector<std::string>& options);
-bool ChoiceStepper(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel);
+bool ChoiceStepper(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel, float width = 0.f);
 float KeyCapWidth(const char* label, float size = 10.5f);
 void KeyCap(float x, float cy, const char* label, bool lit = false, float size = 10.5f);
 // A keycap when bound, "Bind" when not, "Press a key" while capturing.

@@ -379,6 +379,12 @@ int main(int argc, char** argv) {
         Check(cols.at("gui:col:combat").y == cols.at("gui:col:visuals").y, "the columns stand on one line");
         Check(!cols.count("gui:row:rightclicker"), "the right side has no row of its own");
         Check(opened.at("gui:row:reach").y > cols.at("gui:row:reach").y, "open settings push the rows below down");
+        {   // the arrows sit 2 inside the selector's box
+            const auto& slider = opened.at("gui:set:aimassist:strength");
+            const auto& prev = opened.at("gui:set:aimassist:aimpart#prev");
+            const auto& next = opened.at("gui:set:aimassist:aimpart#next");
+            Check(Near(prev.x - 2.f, slider.x, 1.f) && Near(next.x + next.w + 2.f, slider.x + slider.w, 1.f), "a stacked choice stands as wide as the sliders");
+        }
         Check(g["reach"].on && g["zoom"].on, "a click on a row switches it");
         // a fraction of the strip, and the track stands a knob's width inside it
         Check(Near(g["aimassist"].sliders["strength"], 79.f, 3.f), "a slider in the GUI: " + std::to_string(g["aimassist"].sliders["strength"]));

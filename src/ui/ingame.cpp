@@ -72,7 +72,7 @@ void DrawSettings(AppState& s, const ModuleDef& shown, const ModuleDef& d, Modul
             y += kLineH;
         } else {
             TextMid(Face::Regular, 12.5f, x, y + 11.f, Hex(tok::kLabel), c.label.c_str());
-            ChoiceStepper(id, x + w, y + 22.f + kLineH * 0.5f, c.options, sel);
+            ChoiceStepper(id, x + w, y + 22.f + kLineH * 0.5f, c.options, sel, w);
             y += kLineH + 22.f;
         }
     }

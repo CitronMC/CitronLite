@@ -818,12 +818,13 @@ bool Segmented(const char* id, float x1, float cy, const std::vector<std::string
 }
 
 // The same choice as a value between two arrows, for one with too many options to lay side by side.
-bool ChoiceStepper(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel) {
+// `width` sets how wide it stands; without it, as wide as its longest option asks.
+bool ChoiceStepper(const char* id, float x1, float cy, const std::vector<std::string>& options, int& sel, float width) {
     const int n = (int)options.size();
     if (n == 0) return false;
     float widest = 0.f;
     for (const auto& o : options) widest = std::max(widest, TextW(Face::Medium, 12.f, o.c_str()));
-    const float total = 2.f + 26.f + std::max(96.f, widest + 20.f) + 26.f + 2.f;
+    const float total = width > 0.f ? width : 2.f + 26.f + std::max(96.f, widest + 20.f) + 26.f + 2.f;
     const R box{x1 - total, cy - kSegH * 0.5f, total, kSegH};
     Fill(box, Hex(tok::kWell), 7.f);
     bool changed = false;
